@@ -1,0 +1,343 @@
+# =============================================================================
+# AIOps Demo Bedrock — one-command production-like stack
+#
+# Usage:
+#   cp .env.example .env   # fill AWS keys when using Bedrock (Day-2)
+#   docker compose up -d --build
+#
+# Production choices documented inline. This is a CV / workshop demo that
+# mirrors real AIOps patterns (detect → ticket → RCA → remediate → feedback)
+# without requiring a full K8s cluster.
+# =============================================================================
+
+name: aiops-demo-bedrock
+
+x-otel-env: &otel-env
+  # Prefer OTLP/HTTP (4318) over gRPC (4317) for demo reliability across
+  # language SDKs and reverse proxies. Service name is set per-container.
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://lgtm:4318}
+  OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+  OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=demo,service.namespace=aiops-demo}
+  OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-5000}
+  # Disable noisy exporter retries flooding logs when LGTM is still booting
+  OTEL_EXPORTER_OTLP_TIMEOUT: "10"
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ---------------------------------------------------------------------------
+  # Observability backbone — Grafana LGTM (Loki + Grafana + Tempo + Mimir/Prometheus)
+  # Image: grafana/otel-lgtm (official all-in-one for OTel demos)
+  # ---------------------------------------------------------------------------
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: aiops-lgtm
+    ports:
+      - "3000:3000"   # Grafana UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "9090:9090"   # Prometheus / Mimir metrics
+      - "3100:3100"   # Loki
+      - "3200:3200"   # Tempo
+    environment:
+      # Keep default admin for local demos; never expose this stack publicly.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    # LGTM is a multi-process image; first boot can take 30–90s.
+    # Prefer a TCP/HTTP check that works even if curl is missing in some tags:
+    # bash /dev/tcp is available in the image's shell for most recent builds.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/3000 && echo -e \"GET /api/health HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3 | head -n1 | grep -q 200' || exit 1",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 90s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  # ---------------------------------------------------------------------------
+  # Redis — lightweight pub/sub + list queue for detector → incident-manager
+  # Production would use SQS / Kafka / NATS JetStream; Redis is fine for demo.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: aiops-redis
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  # ---------------------------------------------------------------------------
+  # Demo apps (lightweight stand-in for full OpenTelemetry Demo)
+  # Full otel-demo is multi-GB and slow on laptops; these two services emit
+  # realistic RED metrics + traces and support chaos injection via env/API.
+  # ---------------------------------------------------------------------------
+  checkout-service:
+    build:
+      context: .
+      dockerfile: apps/checkout-service/Dockerfile
+    container_name: aiops-checkout
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: checkout-service
+      SERVICE_NAME: checkout-service
+      PORT: "8080"
+      PAYMENT_URL: http://payment-service:8081
+      ERROR_RATE: ${CHECKOUT_ERROR_RATE:-0.02}
+      BASE_LATENCY_MS: ${CHECKOUT_BASE_LATENCY_MS:-50}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    ports:
+      - "8080:8080"
+    depends_on:
+      # Apps fail-open if OTLP is briefly unavailable; don't block on full LGTM ready.
+      lgtm:
+        condition: service_started
+      payment-service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: apps/payment-service/Dockerfile
+    container_name: aiops-payment
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: payment-service
+      SERVICE_NAME: payment-service
+      PORT: "8081"
+      ERROR_RATE: ${PAYMENT_ERROR_RATE:-0.01}
+      BASE_LATENCY_MS: ${PAYMENT_BASE_LATENCY_MS:-80}
+    ports:
+      - "8081:8081"
+    depends_on:
+      lgtm:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  # ---------------------------------------------------------------------------
+  # AIOps: Anomaly Detector — polls Prometheus, scores anomalies, enqueues events
+  # ---------------------------------------------------------------------------
+  aiops-anomaly-detector:
+    build:
+      context: .
+      dockerfile: aiops-services/anomaly-detector/Dockerfile
+    container_name: aiops-anomaly-detector
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: aiops-anomaly-detector
+      SERVICE_NAME: aiops-anomaly-detector
+      PORT: "8001"
+      PROMETHEUS_URL: http://lgtm:9090
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_QUEUE_ANOMALIES: ${REDIS_QUEUE_ANOMALIES:-aiops:anomalies}
+      ANOMALY_POLL_INTERVAL_SEC: ${ANOMALY_POLL_INTERVAL_SEC:-15}
+      ANOMALY_ERROR_RATE_THRESHOLD: ${ANOMALY_ERROR_RATE_THRESHOLD:-0.15}
+      ANOMALY_LATENCY_P95_MS: ${ANOMALY_LATENCY_P95_MS:-800}
+    ports:
+      - "8001:8001"
+    depends_on:
+      lgtm:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  # ---------------------------------------------------------------------------
+  # AIOps: Incident Manager — consumes anomaly queue, persists incidents (SQLite)
+  # ---------------------------------------------------------------------------
+  aiops-incident-manager:
+    build:
+      context: .
+      dockerfile: aiops-services/incident-manager/Dockerfile
+    container_name: aiops-incident-manager
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: aiops-incident-manager
+      SERVICE_NAME: aiops-incident-manager
+      PORT: "8002"
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_QUEUE_ANOMALIES: ${REDIS_QUEUE_ANOMALIES:-aiops:anomalies}
+      REDIS_QUEUE_INCIDENTS: ${REDIS_QUEUE_INCIDENTS:-aiops:incidents}
+      INCIDENT_DB_PATH: ${INCIDENT_DB_PATH:-/data/incidents.db}
+      # Bedrock reserved for Day-2 RCA enrichment (safe to leave dummy values Day-1)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-anthropic.claude-3-5-sonnet-20240620-v1:0}
+    ports:
+      - "8002:8002"
+    volumes:
+      # Persist SQLite across restarts — production would use Postgres/RDS
+      - incident-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      aiops-anomaly-detector:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 25s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  # ---------------------------------------------------------------------------
+  # Day-2 stubs (built & healthy, business logic intentionally minimal)
+  # Uncomment profiles or keep always-on so `docker compose up` shows full map.
+  # ---------------------------------------------------------------------------
+  aiops-rca-engine:
+    build:
+      context: .
+      dockerfile: aiops-services/rca-engine/Dockerfile
+    container_name: aiops-rca-engine
+    profiles: ["day2"]
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: aiops-rca-engine
+      PORT: "8003"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-anthropic.claude-3-5-sonnet-20240620-v1:0}
+      INCIDENT_MANAGER_URL: http://aiops-incident-manager:8002
+      PROMETHEUS_URL: http://lgtm:9090
+    ports:
+      - "8003:8003"
+    depends_on:
+      aiops-incident-manager:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  aiops-remediation:
+    build:
+      context: .
+      dockerfile: aiops-services/remediation/Dockerfile
+    container_name: aiops-remediation
+    profiles: ["day2"]
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: aiops-remediation
+      PORT: "8004"
+      CHECKOUT_URL: http://checkout-service:8080
+      PAYMENT_URL: http://payment-service:8081
+      INCIDENT_MANAGER_URL: http://aiops-incident-manager:8002
+    ports:
+      - "8004:8004"
+    depends_on:
+      aiops-incident-manager:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  aiops-feedback-collector:
+    build:
+      context: .
+      dockerfile: aiops-services/feedback-collector/Dockerfile
+    container_name: aiops-feedback-collector
+    profiles: ["day2"]
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: aiops-feedback-collector
+      PORT: "8005"
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      INCIDENT_MANAGER_URL: http://aiops-incident-manager:8002
+    ports:
+      - "8005:8005"
+    depends_on:
+      redis:
+        condition: service_healthy
+      aiops-incident-manager:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+networks:
+  aiops-net:
+    driver: bridge
+    name: aiops-demo-net
+
+volumes:
+  redis-data:
+    name: aiops-redis-data
+  incident-data:
+    name: aiops-incident-data

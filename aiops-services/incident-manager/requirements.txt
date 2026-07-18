@@ -1,0 +1,2 @@
+# Docker installs shared/requirements-base.txt + the packages below.
+aiosqlite==0.20.0

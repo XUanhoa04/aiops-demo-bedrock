@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""
+Chaos injection for the AIOps demo.
+
+Examples:
+  python scripts/chaos.py --service checkout --error-rate 0.4
+  python scripts/chaos.py --service payment --extra-latency-ms 1200
+  python scripts/chaos.py --reset
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import urllib.request
+
+
+SERVICES = {
+    "checkout": "http://localhost:8080",
+    "payment": "http://localhost:8081",
+}
+
+
+def post_chaos(base: str, payload: dict) -> dict:
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        f"{base.rstrip('/')}/chaos",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read().decode())
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("--service", choices=list(SERVICES), default="checkout")
+    p.add_argument("--error-rate", type=float, default=None)
+    p.add_argument("--base-latency-ms", type=float, default=None)
+    p.add_argument("--extra-latency-ms", type=float, default=None)
+    p.add_argument(
+        "--reset",
+        action="store_true",
+        help="Reset both services to healthy baseline",
+    )
+    args = p.parse_args()
+
+    if args.reset:
+        for name, url in SERVICES.items():
+            body = {"error_rate": 0.01 if name == "payment" else 0.02, "extra_latency_ms": 0}
+            print(name, post_chaos(url, body))
+        return 0
+
+    payload = {}
+    if args.error_rate is not None:
+        payload["error_rate"] = args.error_rate
+    if args.base_latency_ms is not None:
+        payload["base_latency_ms"] = args.base_latency_ms
+    if args.extra_latency_ms is not None:
+        payload["extra_latency_ms"] = args.extra_latency_ms
+    if not payload:
+        print("nothing to do; pass --error-rate / --extra-latency-ms or --reset", file=sys.stderr)
+        return 2
+
+    result = post_chaos(SERVICES[args.service], payload)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

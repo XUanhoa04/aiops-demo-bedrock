@@ -1,0 +1,18 @@
+# Shared runtime deps for all Python services in this monorepo.
+# Pin loosely for demo reproducibility; production should lock with poetry/uv/pip-tools.
+
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
+httpx==0.28.1
+redis==5.2.1
+python-dotenv==1.0.1
+
+# OpenTelemetry — OTLP HTTP exporters + FastAPI instrumentation
+opentelemetry-api==1.29.0
+opentelemetry-sdk==1.29.0
+opentelemetry-exporter-otlp-proto-http==1.29.0
+opentelemetry-instrumentation-fastapi==0.50b0
+opentelemetry-instrumentation-logging==0.50b0
+opentelemetry-instrumentation-httpx==0.50b0

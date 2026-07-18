@@ -1,0 +1,2 @@
+# Local dev: pip install -r shared/requirements-base.txt
+# Docker installs shared/requirements-base.txt directly (see Dockerfile).
