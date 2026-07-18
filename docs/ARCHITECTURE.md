@@ -2,6 +2,20 @@
 
 This document is the **honest** companion to the README: what we built, why, and what is deliberately *not* production.
 
+## System diagram
+
+Architecture as code via [diagrams.mingrammer.com](https://diagrams.mingrammer.com/)  
+(source: [`generate_architecture_diagram.py`](generate_architecture_diagram.py)).
+
+![SentinelLoop architecture](architecture-sentinel-loop.png)
+
+Regenerate after structural changes:
+
+```bash
+# needs: pip install diagrams  +  Graphviz (`dot` on PATH)
+python docs/generate_architecture_diagram.py
+```
+
 ## Pipeline (logical)
 
 ```

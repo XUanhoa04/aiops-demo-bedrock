@@ -54,46 +54,13 @@ Full diagram & decision rationale: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.
 
 ## Architecture
 
-```mermaid
-flowchart TB
-  subgraph Customer_path["User request path"]
-    U[Client] --> CO[checkout-service]
-    CO --> PAY[payment-service]
-  end
+Full diagram ([diagrams.mingrammer.com](https://diagrams.mingrammer.com/)) — see also [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md):
 
-  subgraph Obs["Observability backbone — grafana/otel-lgtm"]
-    OTLP[OTLP :4317/4318]
-    PROM[Prometheus :9090]
-    LOKI[Loki :3100]
-    TEMPO[Tempo :3200]
-    GRAF[Grafana :3000]
-  end
+![SentinelLoop architecture](docs/architecture-sentinel-loop.png)
 
-  CO & PAY -->|metrics traces logs| OTLP
-  OTLP --> PROM & LOKI & TEMPO
-  GRAF --> PROM & LOKI & TEMPO
-
-  subgraph AIOps_loop["AIOps closed loop"]
-    AD[1 Anomaly Detector<br/>hybrid + confidence]
-    IM[2 Incident Manager<br/>correlate + console]
-    DE[Decision Engine<br/>policy bands]
-    RCA[3 RCA Engine<br/>grounded Bedrock]
-    REM[4 Remediation<br/>gated actions]
-    FB[5 Feedback + Engine QA<br/>meta-SLOs]
-  end
-
-  AD -->|PromQL| PROM
-  AD -->|Redis + webhook| IM
-  IM --> DE
-  DE -->|medium band| RCA
-  DE -->|high + pattern| REM
-  IM -->|async webhook + Redis| RCA
-  RCA -->|evidence| PROM & LOKI & TEMPO
-  RCA -->|PATCH root_cause + trace links| IM
-  RCA -->|propose| REM
-  REM -->|chaos reset / simulate| CO
-  FB -->|human_feedback / FP| IM
-  IM -->|🔍 deep-link| GRAF
+```bash
+# Regenerate PNG (needs Graphviz + pip install diagrams)
+python docs/generate_architecture_diagram.py
 ```
 
 ### Pipeline stages
