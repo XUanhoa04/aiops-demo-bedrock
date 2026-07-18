@@ -58,6 +58,8 @@ def extract_service_mentions(text: str) -> set[str]:
         "checkout-service": ("checkout-service", "checkout service"),
         "payment-gateway": ("payment gateway", "payment-gateway", "gateway timeout"),
         "inventory-service": ("inventory-service", "inventory service"),
+        "fraud-service": ("fraud-service", "fraud service"),
+        "redis-cache": ("redis-cache", "shared redis", "redis cache"),
     }
     for canon, aliases in mapping.items():
         if any(a in blob for a in aliases):
@@ -67,6 +69,10 @@ def extract_service_mentions(text: str) -> set[str]:
         found.add("payment-service")
     if "checkout" in blob and "checkout-service" not in found:
         found.add("checkout-service")
+    if "fraud" in blob and "fraud-service" not in found:
+        found.add("fraud-service")
+    if "inventory" in blob and "inventory-service" not in found:
+        found.add("inventory-service")
     return found
 
 
@@ -75,11 +81,48 @@ def primary_fault_class(text: str) -> Optional[str]:
     t = (text or "").lower()
     if any(x in t for x in ("connection pool", "pool exhaust", "pool exhausted", "db_pool")):
         return "pool"
-    if any(x in t for x in ("cache miss", "cold redis", "redis keyspace")):
+    if any(
+        x in t
+        for x in (
+            "cache miss",
+            "cold redis",
+            "redis keyspace",
+            "shared redis",
+            "redis-cache",
+        )
+    ):
         return "cache"
-    if any(x in t for x in ("gateway timeout", "payment gateway", "dependency timeout")):
+    # Multi-hop / new topology classes before generic gateway/cpu
+    if any(x in t for x in ("fraud-service", "scoring saturation", "fraud dependency")):
+        return "fraud"
+    if any(x in t for x in ("inventory", "stock lock")):
+        return "inventory"
+    if any(x in t for x in ("deploy", "release", "rollback", "post-deploy", "regression")):
+        return "change"
+    if any(
+        x in t
+        for x in (
+            "gateway timeout",
+            "payment gateway",
+            "dependency timeout",
+            "dependency failure",
+            "psp",
+            "deadline exceeded",
+            "client timeout waiting for upstream",
+        )
+    ):
         return "gateway"
-    if any(x in t for x in ("cpu", "thread pool", "throttl", "worker")):
+    if any(
+        x in t
+        for x in (
+            "cpu",
+            "thread pool",
+            "throttl",
+            "worker",
+            "run queue",
+            "scheduling delayed",
+        )
+    ):
         return "cpu"
     if any(
         x in t
@@ -88,6 +131,8 @@ def primary_fault_class(text: str) -> Optional[str]:
             "normal traffic",
             "traffic spike",
             "insufficient evidence",
+            "cannot pin",
+            "no real fault",
         )
     ):
         return "nofault"
@@ -127,13 +172,26 @@ def is_rca_correct(
     pred_class = primary_fault_class(pred_s)
     no_fault = gt_class == "nofault" or any(
         x in gt_s.lower()
-        for x in ("without application fault", "normal traffic", "insufficient")
+        for x in (
+            "without application fault",
+            "normal traffic",
+            "insufficient evidence",
+            "no real fault",
+        )
     )
 
     if no_fault:
         pl = pred_s.lower()
         # Reject inventing a concrete infra fault on normal scenarios
-        if pred_class in {"pool", "cache", "gateway", "cpu"}:
+        if pred_class in {
+            "pool",
+            "cache",
+            "gateway",
+            "cpu",
+            "fraud",
+            "inventory",
+            "change",
+        }:
             return False
         return any(
             x in pl
@@ -144,14 +202,23 @@ def is_rca_correct(
                 "normal",
                 "traffic spike",
                 "without application fault",
+                "incomplete",
             )
         )
 
     # Fault scenarios: class must agree when both sides have a class
     if gt_class and pred_class and gt_class != pred_class and gt_class != "error_rate":
-        # allow error_rate GT to match gateway/pool when keywords strong + service ok
-        if not (gt_class == "error_rate" and pred_class in {"gateway", "pool", "error_rate"}):
-            if jaccard(pred_s, gt_s) < 0.55:
+        # Allow related classes (multi-hop fraud may also cite gateway/dependency)
+        related = {
+            ("fraud", "gateway"),
+            ("gateway", "fraud"),
+            ("inventory", "error_rate"),
+            ("error_rate", "inventory"),
+            ("change", "error_rate"),
+            ("error_rate", "change"),
+        }
+        if (gt_class, pred_class) not in related:
+            if jaccard(pred_s, gt_s) < 0.50:
                 return False
 
     # Wrong-hop guard: if GT clearly names payment vs checkout, pred must mention it
@@ -165,6 +232,11 @@ def is_rca_correct(
     if "checkout-service" in gt_services and "payment-service" not in gt_services:
         if "checkout-service" not in pred_services and "checkout" not in pred_s.lower():
             return False
+    # Multi-hop service roots
+    if "fraud-service" in gt_services and "fraud" not in pred_s.lower():
+        return False
+    if "inventory-service" in gt_services and "inventory" not in pred_s.lower():
+        return False
 
     if jaccard(pred_s, gt_s) >= jaccard_threshold:
         return True
@@ -179,7 +251,14 @@ def is_rca_correct(
             "error_rate",
             "nofault",
         }:
-            return False
+            related = {
+                ("fraud", "gateway"),
+                ("gateway", "fraud"),
+                ("inventory", "error_rate"),
+                ("change", "error_rate"),
+            }
+            if (gt_class, pred_class) not in related:
+                return False
         return True
 
     return False

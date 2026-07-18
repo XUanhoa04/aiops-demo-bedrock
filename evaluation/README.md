@@ -8,22 +8,27 @@ Ground-truth datasets + offline harnesses for **quantitative** quality of:
 ## Why a dataset?
 
 Without fixed scenarios, every model/prompt change is “it looked good in the demo”.  
-This mini set (**~17 RCA** incl. hard + **topology wrong-hop** + **paraphrased hold-out** +
-**8 anomaly** series) is a **regression suite** — not a claim of production-perfect RCA.
-CI requires accuracy ≥ 0.70 **and** the system to **beat naive baselines**.
+Suite size (approx.): **~30 RCA** (core + holdout) and **~20 anomaly** series.
+This is a **regression suite** — not production-perfect quality.
 
-Scoring is intentionally strict: fault-class match + wrong-hop service guards
-(keywords alone are insufficient). Topology catalog: `config/service_topology.yaml`.
+CI gates:
+- Anomaly overall F1 ≥ 0.70, **core** F1 ≥ 0.75  
+- RCA overall accuracy ≥ 0.70, **holdout** accuracy ≥ 0.55  
+- System must **beat naive baselines**
+
+Scoring is strict: fault-class match + wrong-hop service guards.
+Topology catalog: `config/service_topology.yaml` (checkout/payment/inventory/fraud).
 
 ## Layout
 
 | Path | Purpose |
 |------|---------|
-| `rca_scenarios.yaml` | 10 RCA scenarios + ground truth |
-| `anomaly_scenarios.yaml` | 8 labeled anomaly series |
-| `scoring.py` | Jaccard, keyword match, P/R/F1 |
-| `evaluate_rca.py` | Offline (default) / online RCA eval |
-| `evaluate_anomaly.py` | Offline hybrid detector eval |
+| `rca_scenarios.yaml` | RCA core + holdout (split field) |
+| `anomaly_scenarios.yaml` | Anomaly core + holdout (uni + multivariate) |
+| `dataset_io.py` | Multi-file / split loader |
+| `scoring.py` | Jaccard, keyword, class/service guards, P/R/F1 |
+| `evaluate_rca.py` | Offline / online RCA; reports core vs holdout |
+| `evaluate_anomaly.py` | Offline hybrid detector; multivariate IF path |
 | `results/` | JSON outputs |
 
 ## Quick start
@@ -34,8 +39,10 @@ bash scripts/run-evaluation.sh
 
 # or manually
 pip install pyyaml
-python evaluation/evaluate_anomaly.py
-python evaluation/evaluate_rca.py --mode offline
+python evaluation/evaluate_anomaly.py --split all
+python evaluation/evaluate_rca.py --mode offline --split all
+# holdout only (anti-overfit check)
+python evaluation/evaluate_rca.py --split holdout
 ```
 
 Optional:

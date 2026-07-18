@@ -62,37 +62,52 @@ jobs:
           export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/remediation"
           pytest -q aiops-services/remediation/tests
 
-      - name: Offline anomaly evaluation (gate F1 ≥ 0.75)
+      - name: Offline anomaly evaluation (gate overall F1 ≥ 0.70, core F1 ≥ 0.75)
         env:
           PYTHONPATH: ${{ github.workspace }}/shared:${{ github.workspace }}/aiops-services/anomaly-detector:${{ github.workspace }}
         run: |
-          python evaluation/evaluate_anomaly.py \
+          python evaluation/evaluate_anomaly.py --split all \
             --output evaluation/results/anomaly_ci.json
           python - <<'PY'
           import json, sys
           from pathlib import Path
           d = json.loads(Path("evaluation/results/anomaly_ci.json").read_text())
           f1 = float(d["aggregate"]["f1"])
-          print(f"anomaly F1={f1:.3f}")
-          if f1 < 0.75:
-              print("FAIL: anomaly F1 below 0.75", file=sys.stderr)
+          core = (d.get("by_split") or {}).get("core") or {}
+          core_f1 = float(core.get("f1", f1))
+          print(f"anomaly F1={f1:.3f} core_f1={core_f1:.3f} n={d['aggregate'].get('n')}")
+          if f1 < 0.70:
+              print("FAIL: anomaly overall F1 below 0.70", file=sys.stderr)
+              sys.exit(1)
+          if core_f1 < 0.75:
+              print("FAIL: anomaly core F1 below 0.75", file=sys.stderr)
               sys.exit(1)
           PY
 
-      - name: Offline RCA evaluation (gate accuracy ≥ 0.70)
+      - name: Offline RCA evaluation (gate overall ≥ 0.70, holdout ≥ 0.55)
         env:
           PYTHONPATH: ${{ github.workspace }}/shared:${{ github.workspace }}/aiops-services/rca-engine:${{ github.workspace }}
         run: |
-          python evaluation/evaluate_rca.py --mode offline \
+          python evaluation/evaluate_rca.py --mode offline --split all \
             --output evaluation/results/rca_ci.json
           python - <<'PY'
           import json, sys
           from pathlib import Path
           d = json.loads(Path("evaluation/results/rca_ci.json").read_text())
           acc = float(d["aggregate"]["accuracy"])
-          print(f"RCA accuracy={acc:.3f}")
+          hold = (d.get("by_split") or {}).get("holdout") or {}
+          hold_acc = float(hold.get("accuracy", acc))
+          core = (d.get("by_split") or {}).get("core") or {}
+          core_acc = float(core.get("accuracy", acc))
+          print(
+              f"RCA accuracy={acc:.3f} core={core_acc:.3f} holdout={hold_acc:.3f} "
+              f"n={d['aggregate']['n']}"
+          )
           if acc < 0.70:
-              print("FAIL: RCA accuracy below 0.70", file=sys.stderr)
+              print("FAIL: RCA overall accuracy below 0.70", file=sys.stderr)
+              sys.exit(1)
+          if hold_acc < 0.55:
+              print("FAIL: RCA holdout accuracy below 0.55", file=sys.stderr)
               sys.exit(1)
           PY
 

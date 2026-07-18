@@ -38,6 +38,12 @@ sys.path.insert(0, str(ROOT / "shared"))
 sys.path.insert(0, str(ROOT / "aiops-services" / "rca-engine"))
 
 sys.path.insert(0, str(EVAL_DIR))
+from dataset_io import (  # noqa: E402
+    is_fault_scenario,
+    load_scenarios as load_scenarios_multi,
+    resolve_dataset_paths,
+    split_counts,
+)
 from scoring import (  # noqa: E402
     aggregate_rca,
     format_table,
@@ -47,21 +53,10 @@ from scoring import (  # noqa: E402
     RcaScoreRow,
 )
 
-try:
-    import yaml
-except ImportError:  # pragma: no cover
-    yaml = None  # type: ignore
 
-
-def load_scenarios(path: Path) -> list[dict[str, Any]]:
-    text = path.read_text(encoding="utf-8")
-    if path.suffix in {".yaml", ".yml"}:
-        if yaml is None:
-            raise SystemExit("PyYAML required: pip install pyyaml")
-        data = yaml.safe_load(text)
-    else:
-        data = json.loads(text)
-    return list(data.get("scenarios") or [])
+def load_scenarios(path: Path, *, split: str = "all") -> list[dict[str, Any]]:
+    """Backward-compatible single-file loader (used by baselines)."""
+    return load_scenarios_multi([path], split=split)
 
 
 def scenario_to_evidence_pack(sc: dict[str, Any]):
@@ -143,6 +138,16 @@ def scenario_to_evidence_pack(sc: dict[str, Any]):
         if svc not in nb.upstream and svc != primary:
             nb.upstream.append(svc)
 
+    sources_ok = {
+        "prometheus": True,
+        "loki": True,
+        "tempo": True,
+        "topology": True,
+    }
+    if isinstance(sc.get("sources_ok"), dict):
+        sources_ok.update({k: bool(v) for k, v in sc["sources_ok"].items()})
+    gather_errors = list(sc.get("gather_errors") or [])
+
     now = datetime.now(timezone.utc).isoformat()
     pack = EvidencePack(
         incident_id=f"eval-{sc.get('scenario_id')}",
@@ -175,12 +180,8 @@ def scenario_to_evidence_pack(sc: dict[str, Any]):
         error_logs=error_logs,
         traces=trace_rows,
         primary_trace_id=(trace_rows or neighbor_traces or [{}])[0].get("trace_id"),
-        sources_ok={
-            "prometheus": True,
-            "loki": True,
-            "tempo": True,
-            "topology": True,
-        },
+        sources_ok=sources_ok,
+        gather_errors=gather_errors,
         topology=nb.to_dict(),
         neighbor_metrics=neighbor_metrics,
         neighbor_logs=neighbor_logs,
@@ -369,12 +370,24 @@ def run_online(
     return rows
 
 
+def _agg_for(rows: list[RcaScoreRow], scenarios: list[dict[str, Any]]):
+    is_fault = {str(sc["scenario_id"]): is_fault_scenario(sc) for sc in scenarios}
+    return aggregate_rca(rows, is_fault=is_fault)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Evaluate RCA against ground-truth dataset")
     p.add_argument(
         "--dataset",
         type=Path,
-        default=EVAL_DIR / "rca_scenarios.yaml",
+        default=None,
+        help="Primary dataset file (default: evaluation/rca_scenarios.yaml)",
+    )
+    p.add_argument(
+        "--split",
+        choices=("all", "core", "holdout"),
+        default="all",
+        help="Filter scenarios by split field (core/holdout)",
     )
     p.add_argument(
         "--mode",
@@ -392,9 +405,14 @@ def main() -> int:
     )
     args = p.parse_args()
 
-    scenarios = load_scenarios(args.dataset)
-    print(f"=== RCA Evaluation ({args.mode}) n={len(scenarios)} ===")
-    print(f"dataset={args.dataset}")
+    paths = resolve_dataset_paths(
+        args.dataset,
+        default_files=[EVAL_DIR / "rca_scenarios.yaml"],
+    )
+    scenarios = load_scenarios_multi(paths, split=args.split)
+    splits = split_counts(scenarios)
+    print(f"=== RCA Evaluation ({args.mode}) n={len(scenarios)} split={args.split} ===")
+    print(f"dataset={', '.join(str(x) for x in paths)} core={splits['core']} holdout={splits['holdout']}")
 
     if args.mode == "offline":
         rows = run_offline(scenarios, use_bedrock=args.bedrock)
@@ -405,27 +423,33 @@ def main() -> int:
             rca_url=args.rca_url,
         )
 
-    # Scenario rca-08 is normal traffic (not a real fault)
-    is_fault = {
-        str(sc["scenario_id"]): "normal traffic" not in (sc.get("ground_truth_root_cause") or "").lower()
-        and "without application fault" not in (sc.get("ground_truth_root_cause") or "").lower()
-        for sc in scenarios
-    }
-    # mark explicitly
-    for sc in scenarios:
-        sid = str(sc.get("scenario_id"))
-        if sid.endswith("traffic-spike-only") or "normal traffic" in (
-            sc.get("ground_truth_root_cause") or ""
-        ).lower():
-            is_fault[sid] = False
+    by_id = {str(sc["scenario_id"]): sc for sc in scenarios}
+    agg = _agg_for(rows, scenarios)
 
-    agg = aggregate_rca(rows, is_fault=is_fault)
+    # Per-split aggregates (when running all)
+    split_aggs: dict[str, Any] = {}
+    if args.split == "all":
+        for name in ("core", "holdout"):
+            sub_sc = [sc for sc in scenarios if str(sc.get("split") or "core") == name]
+            sub_ids = {str(sc["scenario_id"]) for sc in sub_sc}
+            sub_rows = [r for r in rows if r.scenario_id in sub_ids]
+            if sub_rows:
+                sa = _agg_for(sub_rows, sub_sc)
+                split_aggs[name] = {
+                    "n": sa.n,
+                    "correct": sa.correct,
+                    "accuracy": round(sa.accuracy, 4),
+                    "precision": round(sa.binary.precision(), 4),
+                    "recall": round(sa.binary.recall(), 4),
+                    "f1": round(sa.binary.f1(), 4),
+                }
 
     table = format_table(
-        ["scenario_id", "ok", "jac", "kw", "iter", "mode", "predicted"],
+        ["scenario_id", "split", "ok", "jac", "kw", "iter", "mode", "predicted"],
         [
             [
                 r.scenario_id,
+                str((by_id.get(r.scenario_id) or {}).get("split") or "core"),
                 "Y" if r.correct else "N",
                 f"{r.jaccard:.2f}",
                 f"{r.keyword_rate:.2f}",
@@ -447,11 +471,18 @@ def main() -> int:
     print(f"Mean Jaccard (semantic): {agg.mean_jaccard:.3f}")
     print(f"Mean keyword hit rate:   {agg.mean_keyword_rate:.3f}")
     print(f"Mean iterations:         {agg.mean_iterations:.2f}")
+    for name, sa in split_aggs.items():
+        print(
+            f"  [{name}] n={sa['n']} accuracy={sa['accuracy']:.1%} "
+            f"P={sa['precision']:.1%} R={sa['recall']:.1%} F1={sa['f1']:.1%}"
+        )
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "mode": args.mode,
-        "dataset": str(args.dataset),
+        "dataset": [str(x) for x in paths],
+        "split_filter": args.split,
+        "split_counts": splits,
         "aggregate": {
             "n": agg.n,
             "correct": agg.correct,
@@ -463,9 +494,11 @@ def main() -> int:
             "mean_keyword_rate": round(agg.mean_keyword_rate, 4),
             "mean_iterations": round(agg.mean_iterations, 4),
         },
+        "by_split": split_aggs,
         "rows": [
             {
                 "scenario_id": r.scenario_id,
+                "split": str((by_id.get(r.scenario_id) or {}).get("split") or "core"),
                 "ground_truth": r.ground_truth,
                 "predicted": r.predicted,
                 "correct": r.correct,

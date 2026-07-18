@@ -1,22 +1,16 @@
 #!/usr/bin/env python3
 """
-Evaluate Hybrid Anomaly Detector against labeled mini dataset.
+Evaluate Hybrid Anomaly Detector against labeled mini/suite dataset.
 
-Each scenario streams values into HybridDetector.force_score / evaluate path
-and labels the *final* observation as anomaly vs normal.
+Modes per scenario
+------------------
+  univariate (default): stream `values` into HybridDetector.force_score
+  multivariate: stream `features_series` via evaluate_service (IsolationForest)
 
 Metrics
 -------
-  TP: predicted anomaly AND label=anomaly
-  FP: predicted anomaly AND label=normal
-  FN: predicted normal  AND label=anomaly
-  TN: predicted normal  AND label=normal
-  Precision / Recall / F1 / Accuracy
-
-Why offline series?
--------------------
-Live Prometheus is non-deterministic for CI. Fixed series make precision/recall
-reproducible when tuning zscore_threshold or contamination.
+  TP/FP/FN/TN on the *final* observation only.
+  Report overall + core/holdout when split=all.
 """
 
 from __future__ import annotations
@@ -34,23 +28,12 @@ sys.path.insert(0, str(ROOT / "shared"))
 sys.path.insert(0, str(ROOT / "aiops-services" / "anomaly-detector"))
 sys.path.insert(0, str(EVAL_DIR))
 
+from dataset_io import (  # noqa: E402
+    load_scenarios,
+    resolve_dataset_paths,
+    split_counts,
+)
 from scoring import BinaryCounts, format_table  # noqa: E402
-
-try:
-    import yaml
-except ImportError:
-    yaml = None  # type: ignore
-
-
-def load_scenarios(path: Path) -> list[dict[str, Any]]:
-    text = path.read_text(encoding="utf-8")
-    if path.suffix in {".yaml", ".yml"}:
-        if yaml is None:
-            raise SystemExit("PyYAML required: pip install pyyaml")
-        data = yaml.safe_load(text)
-    else:
-        data = json.loads(text)
-    return list(data.get("scenarios") or [])
 
 
 def evaluate(scenarios: list[dict[str, Any]]) -> tuple[BinaryCounts, list[dict]]:
@@ -60,26 +43,51 @@ def evaluate(scenarios: list[dict[str, Any]]) -> tuple[BinaryCounts, list[dict]]
     rows: list[dict] = []
 
     for sc in scenarios:
-        det = HybridDetector()  # fresh state per scenario
+        det = HybridDetector()
         service = sc.get("service") or "checkout-service"
-        metric = sc.get("metric_name") or "http_error_rate"
-        values = [float(v) for v in (sc.get("values") or [])]
-        thr = float(sc.get("absolute_threshold") or 0.15)
         label = (sc.get("label") or "normal").lower()
         is_true_anomaly = label == "anomaly"
+        mode = (sc.get("mode") or "univariate").lower()
+        thr = float(sc.get("absolute_threshold") or 0.15)
 
         pred_anomaly = False
         last_score = 0.0
         last_methods: list[str] = []
-        for i, v in enumerate(values):
-            # Univariate path + threshold via force_score on last points
-            if i < len(values) - 1:
-                det._score_univariate(service, metric, v)
-            else:
-                result = det.force_score(service, metric, v, thr)
-                pred_anomaly = bool(result.is_anomaly)
-                last_score = float(result.anomaly_score)
-                last_methods = list(result.winning_methods)
+        last_value: Any = None
+
+        if mode == "multivariate" or sc.get("features_series"):
+            series = list(sc.get("features_series") or [])
+            for i, feat in enumerate(series):
+                clean = {
+                    k: float(v)
+                    for k, v in (feat or {}).items()
+                    if v is not None and k.startswith("http_")
+                }
+                results = det.evaluate_service(service, clean)
+                if i == len(series) - 1:
+                    pred_anomaly = any(r.is_anomaly for r in results)
+                    if results:
+                        best = max(results, key=lambda r: r.anomaly_score)
+                        last_score = float(best.anomaly_score)
+                        last_methods = list(best.winning_methods)
+                        # collect IF wins from any result
+                        for r in results:
+                            for m in r.winning_methods:
+                                if m not in last_methods:
+                                    last_methods.append(m)
+                    last_value = clean
+        else:
+            metric = sc.get("metric_name") or "http_error_rate"
+            values = [float(v) for v in (sc.get("values") or [])]
+            for i, v in enumerate(values):
+                if i < len(values) - 1:
+                    det._score_univariate(service, metric, v)
+                else:
+                    result = det.force_score(service, metric, v, thr)
+                    pred_anomaly = bool(result.is_anomaly)
+                    last_score = float(result.anomaly_score)
+                    last_methods = list(result.winning_methods)
+                    last_value = v
 
         if is_true_anomaly and pred_anomaly:
             counts.tp += 1
@@ -97,20 +105,38 @@ def evaluate(scenarios: list[dict[str, Any]]) -> tuple[BinaryCounts, list[dict]]
         rows.append(
             {
                 "scenario_id": sc.get("scenario_id"),
+                "split": sc.get("split") or "core",
+                "mode": mode,
                 "label": label,
                 "predicted_anomaly": pred_anomaly,
                 "outcome": outcome,
                 "score": round(last_score, 4),
                 "methods": last_methods,
-                "last_value": values[-1] if values else None,
+                "last_value": last_value,
             }
         )
         print(
-            f"  [{sc.get('scenario_id')}] {outcome} label={label} "
-            f"pred={pred_anomaly} score={last_score:.2f} methods={last_methods}"
+            f"  [{sc.get('scenario_id')}] {outcome} split={sc.get('split')} "
+            f"mode={mode} label={label} pred={pred_anomaly} "
+            f"score={last_score:.2f} methods={last_methods}"
         )
 
     return counts, rows
+
+
+def _counts_from_rows(rows: list[dict]) -> BinaryCounts:
+    c = BinaryCounts()
+    for r in rows:
+        o = r["outcome"]
+        if o == "TP":
+            c.tp += 1
+        elif o == "FP":
+            c.fp += 1
+        elif o == "FN":
+            c.fn += 1
+        elif o == "TN":
+            c.tn += 1
+    return c
 
 
 def main() -> int:
@@ -118,7 +144,12 @@ def main() -> int:
     p.add_argument(
         "--dataset",
         type=Path,
-        default=EVAL_DIR / "anomaly_scenarios.yaml",
+        default=None,
+    )
+    p.add_argument(
+        "--split",
+        choices=("all", "core", "holdout"),
+        default="all",
     )
     p.add_argument(
         "--output",
@@ -127,15 +158,43 @@ def main() -> int:
     )
     args = p.parse_args()
 
-    scenarios = load_scenarios(args.dataset)
-    print(f"=== Anomaly Detection Evaluation n={len(scenarios)} ===")
+    paths = resolve_dataset_paths(
+        args.dataset,
+        default_files=[EVAL_DIR / "anomaly_scenarios.yaml"],
+    )
+    scenarios = load_scenarios(paths, split=args.split)
+    splits = split_counts(scenarios)
+    print(
+        f"=== Anomaly Detection Evaluation n={len(scenarios)} "
+        f"split={args.split} core={splits['core']} holdout={splits['holdout']} ==="
+    )
     counts, rows = evaluate(scenarios)
 
+    by_split: dict[str, Any] = {}
+    if args.split == "all":
+        for name in ("core", "holdout"):
+            sub = [r for r in rows if r.get("split") == name]
+            if not sub:
+                continue
+            sc = _counts_from_rows(sub)
+            by_split[name] = {
+                "n": len(sub),
+                "precision": round(sc.precision(), 4),
+                "recall": round(sc.recall(), 4),
+                "f1": round(sc.f1(), 4),
+                "accuracy": round(sc.accuracy(), 4),
+                "tp": sc.tp,
+                "fp": sc.fp,
+                "tn": sc.tn,
+                "fn": sc.fn,
+            }
+
     table = format_table(
-        ["scenario_id", "label", "pred", "out", "score"],
+        ["scenario_id", "split", "label", "pred", "out", "score"],
         [
             [
                 str(r["scenario_id"]),
+                str(r.get("split") or "core"),
                 str(r["label"]),
                 "Y" if r["predicted_anomaly"] else "N",
                 r["outcome"],
@@ -153,11 +212,19 @@ def main() -> int:
     print(f"F1:        {counts.f1():.1%}")
     print(f"Accuracy:  {counts.accuracy():.1%}")
     print(f"TP={counts.tp} FP={counts.fp} TN={counts.tn} FN={counts.fn}")
+    for name, sa in by_split.items():
+        print(
+            f"  [{name}] n={sa['n']} F1={sa['f1']:.1%} "
+            f"P={sa['precision']:.1%} R={sa['recall']:.1%}"
+        )
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "dataset": str(args.dataset),
+        "dataset": [str(x) for x in paths],
+        "split_filter": args.split,
+        "split_counts": splits,
         "aggregate": {
+            "n": len(rows),
             "precision": round(counts.precision(), 4),
             "recall": round(counts.recall(), 4),
             "f1": round(counts.f1(), 4),
@@ -167,6 +234,7 @@ def main() -> int:
             "tn": counts.tn,
             "fn": counts.fn,
         },
+        "by_split": by_split,
         "rows": rows,
         "table": table,
     }

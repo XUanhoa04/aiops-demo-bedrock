@@ -81,7 +81,7 @@ logs), prefer that dependency as `root_cause` — avoid wrong-hop blame on the t
 | Auth | Open APIs on localhost | mTLS, SSO, RBAC on approve/execute |
 | Multi-tenant | Single compose network | Namespace isolation, per-tenant quotas |
 | Topology | Static YAML + Tempo-inferred edges (demo graph) | Mesh/CMDB service graph + continuous discovery |
-| Eval dataset | 15 RCA + 8 anomaly scenarios | Larger labeled set + shadow traffic + human agreement |
+| Eval dataset | ~30 RCA + ~20 anomaly (core/holdout) | Larger labeled set + shadow traffic + human agreement |
 | Auto-remediation | Propose / low-risk chaos reset only | Change windows, canary, automated rollback |
 
 ## Safety invariants (keep these)
@@ -105,9 +105,14 @@ logs), prefer that dependency as `root_cause` — avoid wrong-hop blame on the t
 ## Evaluation honesty
 
 - Offline RCA uses the **same** `rule_based_rca` path as production fallback.
-- Scoring requires **fault-class** agreement (pool / cache / gateway / …) and
-  wrong-hop service guards — keywords alone are not enough.
-- Hold-out scenarios use **paraphrased** log wording (JDBC maxPoolSize, redis GET miss)
-  so the suite is not pure template self-match.
-- CI requires accuracy ≥ 0.70 **and** system **> best baseline**.
-- Report offline rule-path accuracy as a **regression gate**, not “production quality = 100%”.
+- Scoring requires **fault-class** agreement (pool / cache / gateway / fraud /
+  inventory / change / …) and wrong-hop service guards — keywords alone are not enough.
+- Scenarios are tagged `split: core | holdout`. Holdout includes multi-hop fraud,
+  inventory stock lock, shared redis, Loki-down, metric-only, conflicting signals,
+  deploy correlation, dual-fault primary, paraphrases, and no-fault empties.
+- Anomaly holdout covers seasonal series, multivariate IsolationForest, cold-start,
+  flapping, near-threshold, and recovery.
+- CI: anomaly overall F1 ≥ 0.70 + core F1 ≥ 0.75; RCA overall ≥ 0.70 + holdout ≥ 0.55;
+  system must beat naive baselines.
+- High offline rule-path scores after rule expansion are a **regression gate**, not
+  a claim of production-perfect RCA or calibrated LLM quality.

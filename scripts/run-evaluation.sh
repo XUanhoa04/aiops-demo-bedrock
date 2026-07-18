@@ -25,16 +25,16 @@ fi
 $PY -c "import yaml" 2>/dev/null || $PY -m pip install --quiet pyyaml
 
 echo ""
-echo ">>> [1/2] Anomaly Detection evaluation"
+echo ">>> [1/3] Anomaly Detection evaluation (core + holdout)"
 $PY evaluation/evaluate_anomaly.py \
-  --dataset evaluation/anomaly_scenarios.yaml \
+  --split all \
   --output evaluation/results/anomaly_latest.json
 
 echo ""
-echo ">>> [2/3] RCA evaluation (offline rule_based)"
+echo ">>> [2/3] RCA evaluation offline (core + holdout)"
 $PY evaluation/evaluate_rca.py \
   --mode offline \
-  --dataset evaluation/rca_scenarios.yaml \
+  --split all \
   --output evaluation/results/rca_latest.json
 
 echo ""

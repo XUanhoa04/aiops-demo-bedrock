@@ -1,669 +1,1176 @@
-# =============================================================================
-# Mini RCA Evaluation Dataset (ground truth)
-# =============================================================================
-#
-# Why this exists
-# ---------------
-# Without labeled scenarios, "RCA quality" is only anecdote. Production AIOps
-# needs a *regression set*: fixed symptoms + known root causes so we can measure
-# accuracy/precision/recall when we change prompts, models, or rule fallbacks.
-#
-# Each scenario is self-contained (offline-evaluable): synthetic metrics/logs/
-# traces that the evaluator turns into an EvidencePack. Live injection knobs
-# (chaos_*) also document how to reproduce the fault on the running demo stack.
-#
-# Schema per scenario
-# -------------------
-#   scenario_id, description, symptoms, ground_truth_root_cause,
-#   affected_services, expected_actions, keywords (for matching),
-#   optional live chaos profile for dynamic_load / run_scenario.
-# =============================================================================
-
-version: "1.0"
-dataset_name: aiops-rca-mini
-description: >
-  10 production-like failure scenarios for checkout/payment microservices.
-  Used by evaluation/evaluate_rca.py (offline rule/Bedrock path).
-
+version: '1.2'
+dataset_name: aiops-rca-suite
+description: Core + holdout RCA scenarios. Core = regression; holdout = paraphrase/multi-hop/partial backends/conflict/no-fault.
 scenarios:
-  - scenario_id: rca-01-payment-db-pool
-    description: Payment service cannot open DB connections under load; checkout errors cascade.
-    symptoms:
-      metrics:
-        - name: http_error_rate
-          service: payment-service
-          value: 0.42
-        - name: http_latency_p95_seconds
-          service: payment-service
-          value: 1.8
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.28
-      logs:
-        - service: payment-service
-          line: "ERROR payment failure fault_mode=db_pool detail=payment-service database connection pool exhaustion order_id=ord-4421"
-        - service: checkout-service
-          line: "ERROR payment failed: 502 — payment-service database connection pool exhaustion"
-      traces:
-        - service: checkout-service
-          pattern: "checkout → payment span error, duration_ms>1500"
-          duration_ms: 1800
-          status: error
-    ground_truth_root_cause: "payment-service database connection pool exhaustion"
-    affected_services:
-      - payment-service
-      - checkout-service
-    expected_actions:
-      - "Increase DB pool size / fix connection leak on payment-service"
-      - "Reset chaos fault_mode if demo injection"
-    keywords:
-      - connection pool
-      - pool exhaustion
-      - payment-service
-      - database
-    live_chaos:
-      service: payment
-      error_rate: 0.45
-      extra_latency_ms: 400
-      fault_mode: db_pool
+- scenario_id: rca-01-payment-db-pool
+  split: core
+  description: Payment service cannot open DB connections under load; checkout errors cascade.
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: payment-service
+      value: 0.42
+    - name: http_latency_p95_seconds
+      service: payment-service
+      value: 1.8
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.28
+    logs:
+    - service: payment-service
+      line: ERROR payment failure fault_mode=db_pool detail=payment-service database connection pool exhaustion
+        order_id=ord-4421
+    - service: checkout-service
+      line: 'ERROR payment failed: 502 — payment-service database connection pool exhaustion'
+    traces:
+    - service: checkout-service
+      pattern: checkout → payment span error, duration_ms>1500
+      duration_ms: 1800
+      status: error
+  ground_truth_root_cause: payment-service database connection pool exhaustion
+  affected_services:
+  - payment-service
+  - checkout-service
+  expected_actions:
+  - Increase DB pool size / fix connection leak on payment-service
+  - Reset chaos fault_mode if demo injection
+  keywords:
+  - connection pool
+  - pool exhaustion
+  - payment-service
+  - database
+  live_chaos:
+    service: payment
+    error_rate: 0.45
+    extra_latency_ms: 400
+    fault_mode: db_pool
+  is_fault: true
+- scenario_id: rca-02-checkout-db-pool
+  description: Checkout's own order DB pool is exhausted (not payment).
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.55
+    - name: http_request_rate
+      service: checkout-service
+      value: 18.0
+    logs:
+    - service: checkout-service
+      line: ERROR checkout failure fault_mode=db_pool detail=database connection pool exhausted (no free connections)
+        order_id=ord-9912
+    traces:
+    - service: checkout-service
+      pattern: checkout span ends with error before payment call
+      duration_ms: 900
+      status: error
+  ground_truth_root_cause: checkout-service database connection pool exhaustion
+  affected_services:
+  - checkout-service
+  expected_actions:
+  - Increase pool size / fix connection leak on checkout-service
+  keywords:
+  - connection pool
+  - pool exhausted
+  - checkout-service
+  - database
+  live_chaos:
+    service: checkout
+    error_rate: 0.5
+    extra_latency_ms: 200
+    fault_mode: db_pool
+  split: core
+  is_fault: true
+- scenario_id: rca-03-payment-gateway-timeout
+  description: External payment gateway times out; high latency then 502s.
+  symptoms:
+    metrics:
+    - name: http_latency_p95_seconds
+      service: payment-service
+      value: 2.4
+    - name: http_error_rate
+      service: payment-service
+      value: 0.35
+    logs:
+    - service: payment-service
+      line: ERROR payment failure fault_mode=gateway_timeout detail=payment gateway timeout (injected) order_id=ord-2201
+    traces:
+    - service: payment-service
+      pattern: slow /pay spans duration_ms>2000 status=error
+      duration_ms: 2400
+      status: error
+  ground_truth_root_cause: payment gateway timeout / dependency failure
+  affected_services:
+  - payment-service
+  - checkout-service
+  expected_actions:
+  - Check payment gateway health / chaos reset
+  - Add timeout budgets and circuit breaker
+  keywords:
+  - gateway timeout
+  - payment gateway
+  - dependency
+  live_chaos:
+    service: payment
+    error_rate: 0.35
+    extra_latency_ms: 1500
+    fault_mode: gateway_timeout
+  split: core
+  is_fault: true
+- scenario_id: rca-04-checkout-cache-miss
+  description: Cache miss storm on checkout causes high latency (errors still low).
+  symptoms:
+    metrics:
+    - name: http_latency_p95_seconds
+      service: checkout-service
+      value: 1.6
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.04
+    - name: http_request_rate
+      service: checkout-service
+      value: 40.0
+    logs:
+    - service: checkout-service
+      line: WARN fault_mode=cache_miss cache miss storm — cold redis keyspace, fallback to origin order_id=ord-1100
+    - service: checkout-service
+      line: ERROR checkout failure fault_mode=cache_miss detail=cache miss storm — cold redis keyspace, fallback
+        to origin
+    traces:
+    - service: checkout-service
+      pattern: long redis/get + origin fetch children
+      duration_ms: 1600
+      status: ok
+  ground_truth_root_cause: checkout-service high latency due to cache miss / cold redis keyspace
+  affected_services:
+  - checkout-service
+  expected_actions:
+  - Warm cache / check redis availability
+  keywords:
+  - cache miss
+  - redis
+  - latency
+  - checkout-service
+  live_chaos:
+    service: checkout
+    error_rate: 0.08
+    extra_latency_ms: 1200
+    fault_mode: cache_miss
+  split: core
+  is_fault: true
+- scenario_id: rca-05-payment-redis-cache
+  description: Payment card-token cache cold path spikes latency.
+  symptoms:
+    metrics:
+    - name: http_latency_p95_seconds
+      service: payment-service
+      value: 1.3
+    - name: http_error_rate
+      service: payment-service
+      value: 0.06
+    logs:
+    - service: payment-service
+      line: WARN redis cache miss — cold card-token lookup path order_id=ord-555
+    - service: payment-service
+      line: ERROR payment failure fault_mode=redis_cache_miss detail=redis cache miss — cold card-token lookup path
+    traces:
+    - service: payment-service
+      pattern: redis GET miss then DB lookup
+      duration_ms: 1300
+      status: ok
+  ground_truth_root_cause: payment-service high latency due to cache miss / cold redis keyspace
+  affected_services:
+  - payment-service
+  expected_actions:
+  - Warm card-token cache / scale redis
+  keywords:
+  - cache miss
+  - redis
+  - payment-service
+  live_chaos:
+    service: payment
+    error_rate: 0.1
+    extra_latency_ms: 900
+    fault_mode: redis_cache_miss
+  split: core
+  is_fault: true
+- scenario_id: rca-06-checkout-cpu-throttle
+  description: Checkout worker pool saturated under traffic spike.
+  symptoms:
+    metrics:
+    - name: http_latency_p95_seconds
+      service: checkout-service
+      value: 1.1
+    - name: http_request_rate
+      service: checkout-service
+      value: 55.0
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.12
+    logs:
+    - service: checkout-service
+      line: ERROR checkout failure fault_mode=cpu_throttle detail=worker thread pool saturated / CPU throttle
+    - service: checkout-service
+      line: WARN thread pool queue depth high; cpu throttle active
+    traces:
+    - service: checkout-service
+      pattern: queue wait before handler
+      duration_ms: 1100
+      status: error
+  ground_truth_root_cause: checkout-service worker/thread pool saturation or CPU throttle
+  affected_services:
+  - checkout-service
+  expected_actions:
+  - Scale replicas / increase worker concurrency
+  keywords:
+  - thread pool
+  - cpu
+  - throttle
+  - saturation
+  live_chaos:
+    service: checkout
+    error_rate: 0.15
+    extra_latency_ms: 800
+    fault_mode: cpu_throttle
+  split: core
+  is_fault: true
+- scenario_id: rca-07-cascade-payment-to-checkout
+  description: Payment errors (pool) cause checkout 502 cascade — root is payment.
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.4
+    - name: http_error_rate
+      service: payment-service
+      value: 0.5
+    logs:
+    - service: payment-service
+      line: ERROR payment-service database connection pool exhaustion
+    - service: checkout-service
+      line: 'ERROR payment failed: 502 payment-service database connection pool exhaustion'
+    traces:
+    - service: checkout-service
+      pattern: child payment span error
+      duration_ms: 2000
+      status: error
+  ground_truth_root_cause: payment-service database connection pool exhaustion
+  affected_services:
+  - payment-service
+  - checkout-service
+  expected_actions:
+  - Fix payment DB pool first (not checkout restarts)
+  keywords:
+  - payment-service
+  - connection pool
+  - cascade
+  live_chaos:
+    service: payment
+    error_rate: 0.5
+    extra_latency_ms: 300
+    fault_mode: db_pool
+  split: core
+  is_fault: true
+- scenario_id: rca-08-traffic-spike-only
+  description: Benign traffic spike — elevated RPS, mild latency, low errors (no true RCA).
+  symptoms:
+    metrics:
+    - name: http_request_rate
+      service: checkout-service
+      value: 80.0
+    - name: http_latency_p95_seconds
+      service: checkout-service
+      value: 0.25
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.02
+    logs: []
+    traces:
+    - service: checkout-service
+      pattern: healthy spans
+      duration_ms: 120
+      status: ok
+  ground_truth_root_cause: normal traffic spike without application fault / insufficient evidence
+  affected_services:
+  - checkout-service
+  expected_actions:
+  - Monitor only; no remediation
+  keywords:
+  - traffic spike
+  - normal
+  - no fault
+  - insufficient
+  live_chaos:
+    service: checkout
+    error_rate: 0.02
+    extra_latency_ms: 0
+    fault_mode: none
+  split: core
+  is_fault: false
+- scenario_id: rca-09-payment-high-error-generic
+  description: 'High payment error rate with gateway timeout logs (single GT class: gateway).'
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: payment-service
+      value: 0.48
+    - name: http_latency_p95_seconds
+      service: payment-service
+      value: 0.9
+    logs:
+    - service: payment-service
+      line: ERROR payment failure detail=payment gateway timeout (injected) order_id=ord-77
+    traces:
+    - service: payment-service
+      pattern: error spans
+      duration_ms: 900
+      status: error
+  ground_truth_root_cause: payment gateway timeout / dependency failure
+  affected_services:
+  - payment-service
+  expected_actions:
+  - Inspect payment chaos / gateway
+  keywords:
+  - payment gateway
+  - gateway timeout
+  - payment-service
+  - timeout
+  live_chaos:
+    service: payment
+    error_rate: 0.45
+    extra_latency_ms: 500
+    fault_mode: gateway_timeout
+  split: core
+  is_fault: true
+- scenario_id: rca-10-checkout-dependency-timeout
+  description: Checkout marks dependency timeout when payment is slow/dead.
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.38
+    - name: http_latency_p95_seconds
+      service: checkout-service
+      value: 2.1
+    logs:
+    - service: checkout-service
+      line: ERROR checkout failure fault_mode=dependency_timeout detail=upstream dependency timeout (payment gateway)
+    - service: payment-service
+      line: ERROR payment gateway timeout (injected)
+    traces:
+    - service: checkout-service
+      pattern: client span to payment times out
+      duration_ms: 2100
+      status: error
+  ground_truth_root_cause: payment gateway timeout / dependency failure
+  affected_services:
+  - checkout-service
+  - payment-service
+  expected_actions:
+  - Check payment-service and gateway; set timeouts
+  keywords:
+  - dependency timeout
+  - payment gateway
+  - upstream
+  live_chaos:
+    service: checkout
+    error_rate: 0.35
+    extra_latency_ms: 1000
+    fault_mode: dependency_timeout
+  split: core
+  is_fault: true
+- scenario_id: rca-11-partial-evidence-pool
+  description: 'HARD — only logs mention pool exhaustion; metrics show mild error rate (partial observability).
+    System must still surface pool root cause.
 
-  - scenario_id: rca-02-checkout-db-pool
-    description: Checkout's own order DB pool is exhausted (not payment).
-    symptoms:
-      metrics:
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.55
-        - name: http_request_rate
-          service: checkout-service
-          value: 18.0
-      logs:
-        - service: checkout-service
-          line: "ERROR checkout failure fault_mode=db_pool detail=database connection pool exhausted (no free connections) order_id=ord-9912"
-      traces:
-        - service: checkout-service
-          pattern: "checkout span ends with error before payment call"
-          duration_ms: 900
-          status: error
-    ground_truth_root_cause: "checkout-service database connection pool exhaustion"
-    affected_services:
-      - checkout-service
-    expected_actions:
-      - "Increase pool size / fix connection leak on checkout-service"
-    keywords:
-      - connection pool
-      - pool exhausted
-      - checkout-service
-      - database
-    live_chaos:
-      service: checkout
-      error_rate: 0.5
-      extra_latency_ms: 200
-      fault_mode: db_pool
+    '
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: payment-service
+      value: 0.12
+    logs:
+    - service: payment-service
+      line: 'ERROR FATAL: remaining connection slots are reserved; connection pool exhausted'
+    traces: []
+  ground_truth_root_cause: payment-service database connection pool exhaustion
+  affected_services:
+  - payment-service
+  expected_actions:
+  - Investigate DB pool / connection leaks
+  keywords:
+  - connection pool
+  - pool exhausted
+  - payment-service
+  live_chaos:
+    service: payment
+    error_rate: 0.15
+    fault_mode: db_pool
+  split: holdout
+  is_fault: true
+- scenario_id: rca-12-noisy-logs-latency
+  description: 'HARD — many unrelated WARN lines + true cache miss signal; latency high. Must prefer cache-miss
+    over generic noise.
 
-  - scenario_id: rca-03-payment-gateway-timeout
-    description: External payment gateway times out; high latency then 502s.
-    symptoms:
-      metrics:
-        - name: http_latency_p95_seconds
-          service: payment-service
-          value: 2.4
-        - name: http_error_rate
-          service: payment-service
-          value: 0.35
-      logs:
-        - service: payment-service
-          line: "ERROR payment failure fault_mode=gateway_timeout detail=payment gateway timeout (injected) order_id=ord-2201"
-      traces:
-        - service: payment-service
-          pattern: "slow /pay spans duration_ms>2000 status=error"
-          duration_ms: 2400
-          status: error
-    ground_truth_root_cause: "payment gateway timeout / dependency failure"
-    affected_services:
-      - payment-service
-      - checkout-service
-    expected_actions:
-      - "Check payment gateway health / chaos reset"
-      - "Add timeout budgets and circuit breaker"
-    keywords:
-      - gateway timeout
-      - payment gateway
-      - dependency
-    live_chaos:
-      service: payment
-      error_rate: 0.35
-      extra_latency_ms: 1500
-      fault_mode: gateway_timeout
+    '
+  symptoms:
+    metrics:
+    - name: http_latency_p95_seconds
+      service: checkout-service
+      value: 1.9
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.05
+    logs:
+    - service: checkout-service
+      line: WARN retrying metrics exporter connection refused
+    - service: checkout-service
+      line: INFO healthz ok
+    - service: checkout-service
+      line: ERROR fault_mode=cache_miss cache miss storm — cold redis keyspace, fallback to origin
+    traces:
+    - service: checkout-service
+      pattern: slow redis path
+      duration_ms: 1900
+      status: ok
+  ground_truth_root_cause: checkout-service high latency due to cache miss / cold redis keyspace
+  affected_services:
+  - checkout-service
+  expected_actions:
+  - Warm redis / fix cache keyspace
+  keywords:
+  - cache miss
+  - redis
+  - latency
+  live_chaos:
+    service: checkout
+    error_rate: 0.08
+    extra_latency_ms: 1400
+    fault_mode: cache_miss
+  split: holdout
+  is_fault: true
+- scenario_id: rca-13-wrong-hop-checkout-symptom
+  description: 'TOPOLOGY — Ticket is on checkout-service (symptom 502s) but payment DB pool is the root. RCA must
+    not stop at checkout.
 
-  - scenario_id: rca-04-checkout-cache-miss
-    description: Cache miss storm on checkout causes high latency (errors still low).
-    symptoms:
-      metrics:
-        - name: http_latency_p95_seconds
-          service: checkout-service
-          value: 1.6
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.04
-        - name: http_request_rate
-          service: checkout-service
-          value: 40.0
-      logs:
-        - service: checkout-service
-          line: "WARN fault_mode=cache_miss cache miss storm — cold redis keyspace, fallback to origin order_id=ord-1100"
-        - service: checkout-service
-          line: "ERROR checkout failure fault_mode=cache_miss detail=cache miss storm — cold redis keyspace, fallback to origin"
-      traces:
-        - service: checkout-service
-          pattern: "long redis/get + origin fetch children"
-          duration_ms: 1600
-          status: ok
-    ground_truth_root_cause: "checkout-service high latency due to cache miss / cold redis keyspace"
-    affected_services:
-      - checkout-service
-    expected_actions:
-      - "Warm cache / check redis availability"
-    keywords:
-      - cache miss
-      - redis
-      - latency
-      - checkout-service
-    live_chaos:
-      service: checkout
-      error_rate: 0.08
-      extra_latency_ms: 1200
-      fault_mode: cache_miss
+    '
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.32
+    - name: http_error_rate
+      service: payment-service
+      value: 0.55
+    - name: http_latency_p95_seconds
+      service: payment-service
+      value: 1.6
+    logs:
+    - service: payment-service
+      line: ERROR payment-service database connection pool exhaustion order_id=ord-wh1
+    - service: checkout-service
+      line: 'ERROR payment failed: 502 cascade from payment-service'
+    traces:
+    - service: checkout-service
+      pattern: checkout → payment span error
+      duration_ms: 1700
+      status: error
+    - service: payment-service
+      pattern: pay DB pool wait
+      duration_ms: 1600
+      status: error
+  ground_truth_root_cause: payment-service database connection pool exhaustion
+  affected_services:
+  - checkout-service
+  - payment-service
+  expected_actions:
+  - Investigate payment-service first (upstream of checkout)
+  - Do not restart checkout until payment healthy
+  keywords:
+  - payment-service
+  - connection pool
+  - pool exhaustion
+  - upstream
+  live_chaos:
+    service: payment
+    error_rate: 0.5
+    extra_latency_ms: 400
+    fault_mode: db_pool
+  split: holdout
+  is_fault: true
+- scenario_id: rca-14-wrong-hop-gateway
+  description: 'TOPOLOGY — Checkout latency/errors while payment gateway timeouts are the root.
 
-  - scenario_id: rca-05-payment-redis-cache
-    description: Payment card-token cache cold path spikes latency.
-    symptoms:
-      metrics:
-        - name: http_latency_p95_seconds
-          service: payment-service
-          value: 1.3
-        - name: http_error_rate
-          service: payment-service
-          value: 0.06
-      logs:
-        - service: payment-service
-          line: "WARN redis cache miss — cold card-token lookup path order_id=ord-555"
-        - service: payment-service
-          line: "ERROR payment failure fault_mode=redis_cache_miss detail=redis cache miss — cold card-token lookup path"
-      traces:
-        - service: payment-service
-          pattern: "redis GET miss then DB lookup"
-          duration_ms: 1300
-          status: ok
-    ground_truth_root_cause: "payment-service high latency due to cache miss / cold redis keyspace"
-    affected_services:
-      - payment-service
-    expected_actions:
-      - "Warm card-token cache / scale redis"
-    keywords:
-      - cache miss
-      - redis
-      - payment-service
-    live_chaos:
-      service: payment
-      error_rate: 0.1
-      extra_latency_ms: 900
-      fault_mode: redis_cache_miss
+    '
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.28
+    - name: http_latency_p95_seconds
+      service: checkout-service
+      value: 2.0
+    - name: http_error_rate
+      service: payment-service
+      value: 0.4
+    - name: http_latency_p95_seconds
+      service: payment-service
+      value: 2.5
+    logs:
+    - service: payment-service
+      line: ERROR payment gateway timeout (injected) fault_mode=gateway_timeout
+    - service: checkout-service
+      line: ERROR upstream dependency timeout (payment gateway)
+    traces:
+    - service: checkout-service
+      pattern: checkout → payment timeout
+      duration_ms: 2500
+      status: error
+  ground_truth_root_cause: payment gateway timeout / dependency failure
+  affected_services:
+  - checkout-service
+  - payment-service
+  expected_actions:
+  - Check payment gateway / payment-service chaos
+  keywords:
+  - payment gateway
+  - gateway timeout
+  - dependency
+  - payment-service
+  live_chaos:
+    service: payment
+    error_rate: 0.4
+    extra_latency_ms: 1500
+    fault_mode: gateway_timeout
+  split: holdout
+  is_fault: true
+- scenario_id: rca-15-local-root-not-upstream
+  description: 'TOPOLOGY negative — Checkout has its own DB pool exhaustion; payment is healthy. Must NOT blame
+    payment just because it is upstream in the catalog.
 
-  - scenario_id: rca-06-checkout-cpu-throttle
-    description: Checkout worker pool saturated under traffic spike.
-    symptoms:
-      metrics:
-        - name: http_latency_p95_seconds
-          service: checkout-service
-          value: 1.1
-        - name: http_request_rate
-          service: checkout-service
-          value: 55.0
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.12
-      logs:
-        - service: checkout-service
-          line: "ERROR checkout failure fault_mode=cpu_throttle detail=worker thread pool saturated / CPU throttle"
-        - service: checkout-service
-          line: "WARN thread pool queue depth high; cpu throttle active"
-      traces:
-        - service: checkout-service
-          pattern: "queue wait before handler"
-          duration_ms: 1100
-          status: error
-    ground_truth_root_cause: "checkout-service worker/thread pool saturation or CPU throttle"
-    affected_services:
-      - checkout-service
-    expected_actions:
-      - "Scale replicas / increase worker concurrency"
-    keywords:
-      - thread pool
-      - cpu
-      - throttle
-      - saturation
-    live_chaos:
-      service: checkout
-      error_rate: 0.15
-      extra_latency_ms: 800
-      fault_mode: cpu_throttle
+    '
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.5
+    - name: http_error_rate
+      service: payment-service
+      value: 0.01
+    logs:
+    - service: checkout-service
+      line: ERROR database connection pool exhausted (no free connections) fault_mode=db_pool
+    traces:
+    - service: checkout-service
+      pattern: checkout local DB error before payment call
+      duration_ms: 400
+      status: error
+  ground_truth_root_cause: checkout-service database connection pool exhaustion
+  affected_services:
+  - checkout-service
+  expected_actions:
+  - Fix checkout DB pool (not payment)
+  keywords:
+  - checkout-service
+  - connection pool
+  - pool exhausted
+  live_chaos:
+    service: checkout
+    error_rate: 0.5
+    fault_mode: db_pool
+  split: holdout
+  is_fault: true
+- scenario_id: rca-16-paraphrase-pool
+  description: 'HOLD-OUT wording — pool saturation described without exact rule template strings; still must identify
+    payment DB pool class.
 
-  - scenario_id: rca-07-cascade-payment-to-checkout
-    description: Payment errors (pool) cause checkout 502 cascade — root is payment.
-    symptoms:
-      metrics:
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.4
-        - name: http_error_rate
-          service: payment-service
-          value: 0.5
-      logs:
-        - service: payment-service
-          line: "ERROR payment-service database connection pool exhaustion"
-        - service: checkout-service
-          line: "ERROR payment failed: 502 payment-service database connection pool exhaustion"
-      traces:
-        - service: checkout-service
-          pattern: "child payment span error"
-          duration_ms: 2000
-          status: error
-    ground_truth_root_cause: "payment-service database connection pool exhaustion"
-    affected_services:
-      - payment-service
-      - checkout-service
-    expected_actions:
-      - "Fix payment DB pool first (not checkout restarts)"
-    keywords:
-      - payment-service
-      - connection pool
-      - cascade
-    live_chaos:
-      service: payment
-      error_rate: 0.5
-      extra_latency_ms: 300
-      fault_mode: db_pool
+    '
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.33
+    - name: http_error_rate
+      service: payment-service
+      value: 0.61
+    - name: http_latency_p95_seconds
+      service: payment-service
+      value: 1.9
+    logs:
+    - service: payment-service
+      line: ERROR could not obtain JDBC connection; maxPoolSize reached waiting 30s order=ord-p16
+    - service: checkout-service
+      line: ERROR downstream payment returned 503 Service Unavailable
+    traces:
+    - service: checkout-service
+      pattern: checkout → payment client error
+      duration_ms: 1900
+      status: error
+  ground_truth_root_cause: payment-service database connection pool exhaustion
+  affected_services:
+  - payment-service
+  - checkout-service
+  expected_actions:
+  - Raise payment DB pool / fix leak
+  keywords:
+  - payment-service
+  - connection
+  - pool
+  - JDBC
+  live_chaos:
+    service: payment
+    error_rate: 0.5
+    fault_mode: db_pool
+  split: holdout
+  is_fault: true
+- scenario_id: rca-17-paraphrase-cache
+  description: 'HOLD-OUT wording — redis cold path without exact "cache miss storm" phrase.
 
-  - scenario_id: rca-08-traffic-spike-only
-    description: Benign traffic spike — elevated RPS, mild latency, low errors (no true RCA).
-    symptoms:
-      metrics:
-        - name: http_request_rate
-          service: checkout-service
-          value: 80.0
-        - name: http_latency_p95_seconds
-          service: checkout-service
-          value: 0.25
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.02
-      # No error logs — only healthy INFO noise (do not put in error stream)
-      logs: []
-      traces:
-        - service: checkout-service
-          pattern: "healthy spans"
-          duration_ms: 120
-          status: ok
-    ground_truth_root_cause: "normal traffic spike without application fault / insufficient evidence"
-    affected_services:
-      - checkout-service
-    expected_actions:
-      - "Monitor only; no remediation"
-    keywords:
-      - traffic spike
-      - normal
-      - no fault
-      - insufficient
-    # No aggressive chaos — load generator spike stage only
-    live_chaos:
-      service: checkout
-      error_rate: 0.02
-      extra_latency_ms: 0
-      fault_mode: none
-
-  - scenario_id: rca-09-payment-high-error-generic
-    description: High payment error rate without specific pool message (metric-driven).
-    symptoms:
-      metrics:
-        - name: http_error_rate
-          service: payment-service
-          value: 0.48
-        - name: http_latency_p95_seconds
-          service: payment-service
-          value: 0.9
-      logs:
-        - service: payment-service
-          line: "ERROR payment failure detail=payment gateway timeout (injected) order_id=ord-77"
-      traces:
-        - service: payment-service
-          pattern: "error spans"
-          duration_ms: 900
-          status: error
-    ground_truth_root_cause: "elevated error rate on payment-service / payment gateway timeout"
-    affected_services:
-      - payment-service
-    expected_actions:
-      - "Inspect payment chaos / gateway"
-    keywords:
-      - error rate
-      - payment-service
-      - gateway
-      - timeout
-    live_chaos:
-      service: payment
-      error_rate: 0.45
-      extra_latency_ms: 500
-      fault_mode: gateway_timeout
-
-  - scenario_id: rca-10-checkout-dependency-timeout
-    description: Checkout marks dependency timeout when payment is slow/dead.
-    symptoms:
-      metrics:
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.38
-        - name: http_latency_p95_seconds
-          service: checkout-service
-          value: 2.1
-      logs:
-        - service: checkout-service
-          line: "ERROR checkout failure fault_mode=dependency_timeout detail=upstream dependency timeout (payment gateway)"
-        - service: payment-service
-          line: "ERROR payment gateway timeout (injected)"
-      traces:
-        - service: checkout-service
-          pattern: "client span to payment times out"
-          duration_ms: 2100
-          status: error
-    ground_truth_root_cause: "payment gateway timeout / dependency failure"
-    affected_services:
-      - checkout-service
-      - payment-service
-    expected_actions:
-      - "Check payment-service and gateway; set timeouts"
-    keywords:
-      - dependency timeout
-      - payment gateway
-      - upstream
-    live_chaos:
-      service: checkout
-      error_rate: 0.35
-      extra_latency_ms: 1000
-      fault_mode: dependency_timeout
-
-  # --- Hard / hold-out style scenarios (partial or noisy evidence) ---
-  - scenario_id: rca-11-partial-evidence-pool
-    description: >
-      HARD — only logs mention pool exhaustion; metrics show mild error rate
-      (partial observability). System must still surface pool root cause.
-    symptoms:
-      metrics:
-        - name: http_error_rate
-          service: payment-service
-          value: 0.12
-      logs:
-        - service: payment-service
-          line: "ERROR FATAL: remaining connection slots are reserved; connection pool exhausted"
-      traces: []
-    ground_truth_root_cause: "payment-service database connection pool exhaustion"
-    affected_services:
-      - payment-service
-    expected_actions:
-      - "Investigate DB pool / connection leaks"
-    keywords:
-      - connection pool
-      - pool exhausted
-      - payment-service
-    live_chaos:
-      service: payment
-      error_rate: 0.15
-      fault_mode: db_pool
-
-  - scenario_id: rca-12-noisy-logs-latency
-    description: >
-      HARD — many unrelated WARN lines + true cache miss signal; latency high.
-      Must prefer cache-miss over generic noise.
-    symptoms:
-      metrics:
-        - name: http_latency_p95_seconds
-          service: checkout-service
-          value: 1.9
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.05
-      logs:
-        - service: checkout-service
-          line: "WARN retrying metrics exporter connection refused"
-        - service: checkout-service
-          line: "INFO healthz ok"
-        - service: checkout-service
-          line: "ERROR fault_mode=cache_miss cache miss storm — cold redis keyspace, fallback to origin"
-      traces:
-        - service: checkout-service
-          pattern: "slow redis path"
-          duration_ms: 1900
-          status: ok
-    ground_truth_root_cause: "checkout-service high latency due to cache miss / cold redis keyspace"
-    affected_services:
-      - checkout-service
-    expected_actions:
-      - "Warm redis / fix cache keyspace"
-    keywords:
-      - cache miss
-      - redis
-      - latency
-    live_chaos:
-      service: checkout
-      error_rate: 0.08
-      extra_latency_ms: 1400
-      fault_mode: cache_miss
-
-  # --- Topology / wrong-hop blame scenarios ---
-  - scenario_id: rca-13-wrong-hop-checkout-symptom
-    description: >
-      TOPOLOGY — Ticket is on checkout-service (symptom 502s) but payment DB pool
-      is the root. RCA must not stop at checkout.
-    ticket_service: checkout-service
-    symptoms:
-      metrics:
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.32
-        - name: http_error_rate
-          service: payment-service
-          value: 0.55
-        - name: http_latency_p95_seconds
-          service: payment-service
-          value: 1.6
-      logs:
-        - service: payment-service
-          line: "ERROR payment-service database connection pool exhaustion order_id=ord-wh1"
-        - service: checkout-service
-          line: "ERROR payment failed: 502 cascade from payment-service"
-      traces:
-        - service: checkout-service
-          pattern: "checkout → payment span error"
-          duration_ms: 1700
-          status: error
-        - service: payment-service
-          pattern: "pay DB pool wait"
-          duration_ms: 1600
-          status: error
-    ground_truth_root_cause: "payment-service database connection pool exhaustion"
-    affected_services:
-      - checkout-service
-      - payment-service
-    expected_actions:
-      - "Investigate payment-service first (upstream of checkout)"
-      - "Do not restart checkout until payment healthy"
-    keywords:
-      - payment-service
-      - connection pool
-      - pool exhaustion
-      - upstream
-    live_chaos:
-      service: payment
-      error_rate: 0.5
-      extra_latency_ms: 400
-      fault_mode: db_pool
-
-  - scenario_id: rca-14-wrong-hop-gateway
-    description: >
-      TOPOLOGY — Checkout latency/errors while payment gateway timeouts are the root.
-    ticket_service: checkout-service
-    symptoms:
-      metrics:
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.28
-        - name: http_latency_p95_seconds
-          service: checkout-service
-          value: 2.0
-        - name: http_error_rate
-          service: payment-service
-          value: 0.4
-        - name: http_latency_p95_seconds
-          service: payment-service
-          value: 2.5
-      logs:
-        - service: payment-service
-          line: "ERROR payment gateway timeout (injected) fault_mode=gateway_timeout"
-        - service: checkout-service
-          line: "ERROR upstream dependency timeout (payment gateway)"
-      traces:
-        - service: checkout-service
-          pattern: "checkout → payment timeout"
-          duration_ms: 2500
-          status: error
-    ground_truth_root_cause: "payment gateway timeout / dependency failure"
-    affected_services:
-      - checkout-service
-      - payment-service
-    expected_actions:
-      - "Check payment gateway / payment-service chaos"
-    keywords:
-      - payment gateway
-      - gateway timeout
-      - dependency
-      - payment-service
-    live_chaos:
-      service: payment
-      error_rate: 0.4
-      extra_latency_ms: 1500
-      fault_mode: gateway_timeout
-
-  - scenario_id: rca-15-local-root-not-upstream
-    description: >
-      TOPOLOGY negative — Checkout has its own DB pool exhaustion; payment is healthy.
-      Must NOT blame payment just because it is upstream in the catalog.
-    ticket_service: checkout-service
-    symptoms:
-      metrics:
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.5
-        - name: http_error_rate
-          service: payment-service
-          value: 0.01
-      logs:
-        - service: checkout-service
-          line: "ERROR database connection pool exhausted (no free connections) fault_mode=db_pool"
-      traces:
-        - service: checkout-service
-          pattern: "checkout local DB error before payment call"
-          duration_ms: 400
-          status: error
-    ground_truth_root_cause: "checkout-service database connection pool exhaustion"
-    affected_services:
-      - checkout-service
-    expected_actions:
-      - "Fix checkout DB pool (not payment)"
-    keywords:
-      - checkout-service
-      - connection pool
-      - pool exhausted
-    live_chaos:
-      service: checkout
-      error_rate: 0.5
-      fault_mode: db_pool
-
-  # --- Paraphrased / hold-out wording (not copy-paste of rule templates) ---
-  - scenario_id: rca-16-paraphrase-pool
-    description: >
-      HOLD-OUT wording — pool saturation described without exact rule template
-      strings; still must identify payment DB pool class.
-    ticket_service: checkout-service
-    symptoms:
-      metrics:
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.33
-        - name: http_error_rate
-          service: payment-service
-          value: 0.61
-        - name: http_latency_p95_seconds
-          service: payment-service
-          value: 1.9
-      logs:
-        - service: payment-service
-          line: "ERROR could not obtain JDBC connection; maxPoolSize reached waiting 30s order=ord-p16"
-        - service: checkout-service
-          line: "ERROR downstream payment returned 503 Service Unavailable"
-      traces:
-        - service: checkout-service
-          pattern: "checkout → payment client error"
-          duration_ms: 1900
-          status: error
-    ground_truth_root_cause: "payment-service database connection pool exhaustion"
-    affected_services:
-      - payment-service
-      - checkout-service
-    expected_actions:
-      - "Raise payment DB pool / fix leak"
-    keywords:
-      - payment-service
-      - connection
-      - pool
-      - JDBC
-    live_chaos:
-      service: payment
-      error_rate: 0.5
-      fault_mode: db_pool
-
-  - scenario_id: rca-17-paraphrase-cache
-    description: >
-      HOLD-OUT wording — redis cold path without exact "cache miss storm" phrase.
-    ticket_service: checkout-service
-    symptoms:
-      metrics:
-        - name: http_latency_p95_seconds
-          service: checkout-service
-          value: 1.7
-        - name: http_error_rate
-          service: checkout-service
-          value: 0.04
-      logs:
-        - service: checkout-service
-          line: "WARN redis GET miss key=sess:* falling back to origin DB (hot path degraded)"
-        - service: checkout-service
-          line: "INFO origin query elapsed_ms=1600 after redis miss"
-      traces:
-        - service: checkout-service
-          pattern: "slow origin after redis"
-          duration_ms: 1650
-          status: ok
-    ground_truth_root_cause: "checkout-service high latency due to cache miss / cold redis keyspace"
-    affected_services:
-      - checkout-service
-    expected_actions:
-      - "Warm redis keyspace / check redis availability"
-    keywords:
-      - redis
-      - miss
-      - latency
-      - checkout-service
-    live_chaos:
-      service: checkout
-      extra_latency_ms: 1200
-      fault_mode: cache_miss
+    '
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_latency_p95_seconds
+      service: checkout-service
+      value: 1.7
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.04
+    logs:
+    - service: checkout-service
+      line: WARN redis GET miss key=sess:* falling back to origin DB (hot path degraded)
+    - service: checkout-service
+      line: INFO origin query elapsed_ms=1600 after redis miss
+    traces:
+    - service: checkout-service
+      pattern: slow origin after redis
+      duration_ms: 1650
+      status: ok
+  ground_truth_root_cause: checkout-service high latency due to cache miss / cold redis keyspace
+  affected_services:
+  - checkout-service
+  expected_actions:
+  - Warm redis keyspace / check redis availability
+  keywords:
+  - redis
+  - miss
+  - latency
+  - checkout-service
+  live_chaos:
+    service: checkout
+    extra_latency_ms: 1200
+    fault_mode: cache_miss
+  split: holdout
+  is_fault: true
+- scenario_id: rca-18-fraud-multi-hop
+  split: holdout
+  is_fault: true
+  description: MULTI-HOP — checkout/payment symptoms; fraud-service is sicker root (payment depends_on fraud).
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.3
+    - name: http_error_rate
+      service: payment-service
+      value: 0.35
+    - name: http_error_rate
+      service: fraud-service
+      value: 0.62
+    - name: http_latency_p95_seconds
+      service: fraud-service
+      value: 2.1
+    logs:
+    - service: fraud-service
+      line: ERROR fraud-service scoring timeout / rule engine saturated order_id=ord-f18
+    - service: payment-service
+      line: 'ERROR payment blocked: fraud dependency unhealthy'
+    - service: checkout-service
+      line: 'ERROR payment failed: 502 cascade'
+    traces:
+    - service: checkout-service
+      pattern: checkout → payment → fraud
+      duration_ms: 2200
+      status: error
+  ground_truth_root_cause: fraud-service latency / scoring saturation cascading into payment and checkout
+  affected_services:
+  - fraud-service
+  - payment-service
+  - checkout-service
+  expected_actions:
+  - Investigate fraud-service first (upstream of payment)
+  - Do not restart checkout until fraud healthy
+  keywords:
+  - fraud-service
+  - scoring
+  - cascade
+  - payment
+  live_chaos:
+    service: payment
+    error_rate: 0.4
+    fault_mode: gateway_timeout
+- scenario_id: rca-19-inventory-stock-lock
+  split: holdout
+  is_fault: true
+  description: TOPOLOGY — checkout depends_on inventory; stock lock stalls checkout.
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_latency_p95_seconds
+      service: checkout-service
+      value: 1.8
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.12
+    - name: http_latency_p95_seconds
+      service: inventory-service
+      value: 2.4
+    - name: http_error_rate
+      service: inventory-service
+      value: 0.08
+    logs:
+    - service: inventory-service
+      line: ERROR inventory stock lock wait timeout sku=SKU-991 remaining locks exhausted
+    - service: checkout-service
+      line: ERROR inventory reserve failed after 2s
+    traces:
+    - service: checkout-service
+      pattern: checkout → inventory reserve slow
+      duration_ms: 2100
+      status: error
+  ground_truth_root_cause: inventory-service stock lock / DB contention causing checkout latency
+  affected_services:
+  - inventory-service
+  - checkout-service
+  expected_actions:
+  - Inspect inventory locks / postgres-inventory
+  - Scale inventory or reduce lock scope
+  keywords:
+  - inventory-service
+  - stock lock
+  - latency
+  - checkout
+  live_chaos:
+    service: checkout
+    extra_latency_ms: 1500
+    fault_mode: dependency_timeout
+- scenario_id: rca-20-shared-redis-blast
+  split: holdout
+  is_fault: true
+  description: SHARED INFRA — checkout and payment both show redis cold-path latency.
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_latency_p95_seconds
+      service: checkout-service
+      value: 1.5
+    - name: http_latency_p95_seconds
+      service: payment-service
+      value: 1.4
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.06
+    - name: http_error_rate
+      service: payment-service
+      value: 0.05
+    logs:
+    - service: checkout-service
+      line: WARN redis GET miss key=sess:* falling back to origin
+    - service: payment-service
+      line: WARN redis cache miss — cold card-token lookup path
+    traces:
+    - service: checkout-service
+      pattern: slow redis path
+      duration_ms: 1400
+      status: ok
+    - service: payment-service
+      pattern: slow redis card-token
+      duration_ms: 1300
+      status: ok
+  ground_truth_root_cause: shared redis-cache miss storm / cold keyspace affecting checkout and payment
+  affected_services:
+  - checkout-service
+  - payment-service
+  expected_actions:
+  - Check redis-cache cluster / memory / eviction
+  - Warm shared keyspace
+  keywords:
+  - redis
+  - cache miss
+  - shared
+  - latency
+  live_chaos:
+    service: checkout
+    extra_latency_ms: 1200
+    fault_mode: cache_miss
+- scenario_id: rca-21-gather-errors-loki-down
+  split: holdout
+  is_fault: true
+  description: Partial observability — Loki down; only elevated payment metrics.
+  ticket_service: payment-service
+  sources_ok:
+    prometheus: true
+    loki: false
+    tempo: true
+    topology: true
+  gather_errors:
+  - 'loki: connection refused'
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: payment-service
+      value: 0.4
+    - name: http_latency_p95_seconds
+      service: payment-service
+      value: 1.1
+    logs: []
+    traces:
+    - service: payment-service
+      pattern: error spans
+      duration_ms: 900
+      status: error
+  ground_truth_root_cause: elevated error rate on payment-service with incomplete log evidence
+  affected_services:
+  - payment-service
+  expected_actions:
+  - Restore Loki
+  - Re-run RCA with full evidence
+  - Inspect payment RED panels
+  keywords:
+  - payment-service
+  - error rate
+  - elevated
+  live_chaos:
+    service: payment
+    error_rate: 0.4
+    fault_mode: none
+- scenario_id: rca-22-metric-only-high-error
+  split: holdout
+  is_fault: true
+  description: Metric-only — high checkout error, empty logs/traces.
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.45
+    - name: http_request_rate
+      service: checkout-service
+      value: 12.0
+    logs: []
+    traces: []
+  ground_truth_root_cause: elevated http_error_rate on checkout-service with insufficient log/trace corroboration
+  affected_services:
+  - checkout-service
+  expected_actions:
+  - Check chaos/error injection on checkout-service
+  - Gather logs/traces before hard remediation
+  keywords:
+  - checkout-service
+  - error rate
+  - elevated
+  live_chaos:
+    service: checkout
+    error_rate: 0.45
+    fault_mode: none
+- scenario_id: rca-23-conflicting-signals
+  split: holdout
+  is_fault: true
+  description: CONFLICT — checkout high errors, payment healthy, no pool/gateway logs.
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.38
+    - name: http_error_rate
+      service: payment-service
+      value: 0.01
+    - name: http_latency_p95_seconds
+      service: payment-service
+      value: 0.08
+    logs:
+    - service: checkout-service
+      line: ERROR checkout failure detail=unexpected 500 on /checkout order_id=ord-c23
+    - service: payment-service
+      line: INFO payment ok
+    traces:
+    - service: checkout-service
+      pattern: checkout local error before payment call
+      duration_ms: 120
+      status: error
+  ground_truth_root_cause: elevated error rate on checkout-service (local) — payment upstream healthy
+  affected_services:
+  - checkout-service
+  expected_actions:
+  - Debug checkout application errors
+  - Do not restart payment
+  keywords:
+  - checkout-service
+  - error rate
+  - elevated
+  live_chaos:
+    service: checkout
+    error_rate: 0.4
+    fault_mode: none
+- scenario_id: rca-24-deploy-change-correlated
+  split: holdout
+  is_fault: true
+  description: CHANGE — deploy marker correlates with payment error spike.
+  ticket_service: payment-service
+  change_events:
+  - type: deploy
+    service: payment-service
+    message: deploy payment-service v2.14.0 rolled out
+    source: scenario
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: payment-service
+      value: 0.33
+    logs:
+    - service: payment-service
+      line: INFO deploy payment-service v2.14.0 complete
+    - service: payment-service
+      line: ERROR payment failure after release NPE in FeeCalculator
+    traces:
+    - service: payment-service
+      pattern: error after deploy
+      duration_ms: 400
+      status: error
+  ground_truth_root_cause: payment-service post-deploy regression / bad release correlated with error spike
+  affected_services:
+  - payment-service
+  expected_actions:
+  - Rollback payment-service v2.14.0
+  - Inspect FeeCalculator NPE
+  keywords:
+  - deploy
+  - payment-service
+  - release
+  - regression
+  - error
+  live_chaos:
+    service: payment
+    error_rate: 0.3
+    fault_mode: none
+- scenario_id: rca-25-dual-fault-primary-pool
+  split: holdout
+  is_fault: true
+  description: DUAL FAULT — pool primary; secondary gateway noise. Prefer pool root.
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: payment-service
+      value: 0.55
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.4
+    logs:
+    - service: payment-service
+      line: ERROR payment-service database connection pool exhaustion
+    - service: payment-service
+      line: WARN intermittent payment gateway timeout (secondary)
+    - service: checkout-service
+      line: 'ERROR payment failed: 502 cascade'
+    traces:
+    - service: checkout-service
+      pattern: checkout → payment error
+      duration_ms: 1800
+      status: error
+  ground_truth_root_cause: payment-service database connection pool exhaustion
+  affected_services:
+  - payment-service
+  - checkout-service
+  expected_actions:
+  - Fix payment DB pool first
+  - Ignore secondary gateway noise until pool healthy
+  keywords:
+  - payment-service
+  - connection pool
+  - pool exhaustion
+  live_chaos:
+    service: payment
+    error_rate: 0.5
+    fault_mode: db_pool
+- scenario_id: rca-26-paraphrase-gateway
+  split: holdout
+  is_fault: true
+  description: HOLD-OUT wording — PSP deadline exceeded (not template string).
+  ticket_service: payment-service
+  symptoms:
+    metrics:
+    - name: http_latency_p95_seconds
+      service: payment-service
+      value: 2.8
+    - name: http_error_rate
+      service: payment-service
+      value: 0.36
+    logs:
+    - service: payment-service
+      line: ERROR PSP provider deadline exceeded after 2500ms; aborting charge
+    traces:
+    - service: payment-service
+      pattern: slow PSP call
+      duration_ms: 2600
+      status: error
+  ground_truth_root_cause: payment gateway timeout / dependency failure
+  affected_services:
+  - payment-service
+  expected_actions:
+  - Check payment-gateway health / timeouts
+  keywords:
+  - gateway
+  - timeout
+  - payment
+  - PSP
+  - deadline
+  live_chaos:
+    service: payment
+    error_rate: 0.35
+    extra_latency_ms: 1500
+    fault_mode: gateway_timeout
+- scenario_id: rca-27-paraphrase-cpu
+  split: holdout
+  is_fault: true
+  description: HOLD-OUT wording — run queue full without cpu_throttle token.
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_latency_p95_seconds
+      service: checkout-service
+      value: 1.2
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.08
+    logs:
+    - service: checkout-service
+      line: WARN executor run queue full; request scheduling delayed 800ms
+    traces:
+    - service: checkout-service
+      pattern: slow handler
+      duration_ms: 1100
+      status: ok
+  ground_truth_root_cause: checkout-service worker/thread pool saturation or CPU throttle
+  affected_services:
+  - checkout-service
+  expected_actions:
+  - Scale checkout workers / check CPU
+  keywords:
+  - checkout-service
+  - queue
+  - saturation
+  - latency
+  - worker
+  live_chaos:
+    service: checkout
+    extra_latency_ms: 900
+    fault_mode: cpu_throttle
+- scenario_id: rca-28-paraphrase-dependency
+  split: holdout
+  is_fault: true
+  description: HOLD-OUT wording — client timeout waiting for upstream payment.
+  ticket_service: checkout-service
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: checkout-service
+      value: 0.34
+    - name: http_latency_p95_seconds
+      service: checkout-service
+      value: 2.0
+    - name: http_error_rate
+      service: payment-service
+      value: 0.3
+    logs:
+    - service: checkout-service
+      line: ERROR http client timeout waiting for upstream payment after 2000ms
+    - service: payment-service
+      line: ERROR PSP provider deadline exceeded
+    traces:
+    - service: checkout-service
+      pattern: client timeout to payment
+      duration_ms: 2000
+      status: error
+  ground_truth_root_cause: payment gateway timeout / dependency failure
+  affected_services:
+  - checkout-service
+  - payment-service
+  expected_actions:
+  - Check payment/gateway; tune client timeouts
+  keywords:
+  - upstream
+  - timeout
+  - payment
+  - dependency
+  - client
+  live_chaos:
+    service: checkout
+    error_rate: 0.3
+    extra_latency_ms: 1000
+    fault_mode: dependency_timeout
+- scenario_id: rca-29-empty-evidence-insufficient
+  split: holdout
+  is_fault: false
+  description: NO-FAULT — empty backends; must not invent pool/gateway root.
+  ticket_service: checkout-service
+  sources_ok:
+    prometheus: false
+    loki: false
+    tempo: false
+    topology: true
+  gather_errors:
+  - 'prometheus: timeout'
+  - 'loki: timeout'
+  - 'tempo: timeout'
+  symptoms:
+    metrics: []
+    logs: []
+    traces: []
+  ground_truth_root_cause: insufficient evidence / cannot pin root cause without observables
+  affected_services:
+  - checkout-service
+  expected_actions:
+  - Restore observability backends
+  - Re-run RCA
+  keywords:
+  - insufficient
+  - evidence
+  - cannot pin
+- scenario_id: rca-30-payment-only-mild-noise
+  split: holdout
+  is_fault: false
+  description: NO-FAULT — mild payment noise under SLO.
+  ticket_service: payment-service
+  symptoms:
+    metrics:
+    - name: http_error_rate
+      service: payment-service
+      value: 0.04
+    - name: http_latency_p95_seconds
+      service: payment-service
+      value: 0.12
+    logs:
+    - service: payment-service
+      line: INFO payment ok order_id=ord-n30
+    traces:
+    - service: payment-service
+      pattern: healthy spans
+      duration_ms: 90
+      status: ok
+  ground_truth_root_cause: normal traffic without application fault / insufficient evidence of outage
+  affected_services:
+  - payment-service
+  expected_actions:
+  - Monitor only
+  keywords:
+  - normal
+  - insufficient
+  - no fault
+  - monitor

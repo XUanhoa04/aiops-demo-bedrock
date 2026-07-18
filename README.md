@@ -255,12 +255,11 @@ python evaluation/evaluate_rca.py --mode online
 
 | Suite | Metric | Notes |
 |-------|--------|--------|
-| **Anomaly** (8) | F1 gate ≥ 0.75 in CI | Hybrid detector on labeled series |
-| **RCA** (~17 incl. topology + paraphrased hold-out) | Accuracy gate ≥ 0.70 in CI | Stricter class/service match — **not** a 100% quality claim |
+| **Anomaly** (~20, core+holdout) | Overall F1 ≥ 0.70; **core** F1 ≥ 0.75 | Uni + seasonal + multivariate IF |
+| **RCA** (~30, core+holdout) | Overall ≥ 0.70; **holdout** ≥ 0.55 | Multi-hop, partial backends, paraphrase — regression gate |
 | **Baselines** | System must **beat** random / always-error / empty | Prevents “dataset overfit” theater |
 
-Scoring requires fault-class agreement (pool/cache/gateway/…) and wrong-hop service guards.
-Re-run after every rules/topology change; treat numbers as a **regression gate**.
+Scoring requires fault-class agreement and wrong-hop service guards. Report **core vs holdout** separately — do not sell a single accuracy as production quality.
 
 ```bash
 bash scripts/run-evaluation.sh
