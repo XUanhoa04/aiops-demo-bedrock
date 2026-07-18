@@ -35,13 +35,13 @@ OUT_NAME = "architecture-sentinel-loop"
 
 def main() -> None:
     graph_attr = {
-        "fontsize": "14",
+        "fontsize": "13",
         "bgcolor": "white",
-        "pad": "0.5",
+        "pad": "0.45",
         "splines": "spline",
-        "nodesep": "0.6",
-        "ranksep": "0.85",
-        "dpi": "140",
+        "nodesep": "0.55",
+        "ranksep": "0.8",
+        "dpi": "150",
     }
 
     with Diagram(
@@ -54,47 +54,55 @@ def main() -> None:
     ):
         operator = User("Operator / On-call")
 
-        with Cluster("1 · Demo traffic (OpenTelemetry)"):
-            checkout = FastAPI("checkout-service\n:8080")
-            payment = FastAPI("payment-service\n:8081")
+        with Cluster("1 · Demo apps (4-service topology + OTel)"):
+            checkout = FastAPI("checkout\n:8080")
+            inventory = FastAPI("inventory\n:8082")
+            payment = FastAPI("payment\n:8081")
+            fraud = FastAPI("fraud\n:8083")
+            checkout >> Edge(label="POST /reserve") >> inventory
             checkout >> Edge(label="POST /pay") >> payment
+            payment >> Edge(label="POST /score") >> fraud
 
         with Cluster("2 · Observability backbone (LGTM)"):
-            prom = Prometheus("Prometheus\nRED metrics")
+            prom = Prometheus("Prometheus\nRED / OTel metrics")
             loki = Storage("Loki\nlogs")
             tempo = Rack("Tempo\ntraces")
-            grafana = Grafana("Grafana\nExplore / dashboards")
+            grafana = Grafana("Grafana\nExplore deep-links")
             [prom, loki, tempo] >> grafana
 
         with Cluster("3 · Detect & score"):
             detector = Python(
                 "anomaly-detector\nEWMA · Z · STL · IForest\n+ multi-signal confidence"
             )
-            redis = Redis("Redis queues\nanomalies · decisions")
+            redis = Redis("Redis\naiops:anomalies")
 
-        with Cluster("4 · Decide & act"):
-            im = FastAPI("incident-manager\ncorrelate · tickets · deep-links")
-            decision = Python("decision-engine\n≥85 gated auto · 60–85 RCA · <60 escalate")
-            rca = Python("rca-engine\ntopology-aware RCA\nBedrock | rule fallback")
-            rem = Server("remediation\nrisk-gated propose/approve")
-            topo = SQL("service topology\nconfig/*.yaml")
+        with Cluster("4 · Single control plane"):
+            im = FastAPI("incident-manager\ntickets · topology UI · Trace links")
+            decision = Python(
+                "decision-engine\n≥85 gated rem · 60–85 RCA · <60 escalate"
+            )
+            rca = Python(
+                "rca-engine\ntopology + config patterns\nBedrock | rule fallback"
+            )
+            rem = Server("remediation\nrisk-gated + optional API key")
+            topo = SQL("topology YAML\n+ rca_patterns.yaml")
 
         with Cluster("5 · Learn (meta-SLOs)"):
             feedback = Python("feedback-collector")
             engqa = Python("engine-qa\nprecision · FP · hallucination")
             console = Python("aiops-console\n:8500")
 
-        # Operator drives apps + UIs
+        # Operator
         operator >> Edge(label="load / chaos") >> checkout
         operator >> console
         operator >> grafana
         operator >> rem
 
-        # Telemetry
-        checkout >> Edge(label="OTLP", style="dashed", color="#666666") >> prom
-        payment >> Edge(style="dashed", color="#666666") >> prom
-        checkout >> Edge(style="dashed", color="#666666") >> loki
-        payment >> Edge(style="dashed", color="#666666") >> tempo
+        # Telemetry (OTLP into LGTM)
+        for app in (checkout, inventory, payment, fraud):
+            app >> Edge(label="OTLP", style="dashed", color="#666666") >> prom
+            app >> Edge(style="dashed", color="#666666") >> loki
+            app >> Edge(style="dashed", color="#666666") >> tempo
 
         # Detect
         prom >> Edge(label="PromQL pull") >> detector
@@ -102,12 +110,12 @@ def main() -> None:
         redis >> im
         detector >> Edge(label="webhook") >> im
 
-        # Decide
-        im >> decision
-        decision >> Edge(label="medium band") >> rca
-        decision >> Edge(label="high + known pattern") >> rem
-        im >> Edge(label="async analyze") >> rca
-        topo >> Edge(label="upstream / downstream") >> rca
+        # Decide (single control plane — IM does not always call RCA)
+        im >> Edge(label="policy") >> decision
+        decision >> Edge(label="medium / unknown") >> rca
+        decision >> Edge(label="high + pattern") >> rem
+        decision >> Edge(label="low conf", style="dotted") >> im
+        topo >> Edge(label="neighbors + patterns") >> rca
 
         # Evidence for RCA
         prom >> Edge(style="dashed", color="#2E86AB") >> rca
@@ -116,13 +124,13 @@ def main() -> None:
 
         rca >> Edge(label="root_cause + trace_id") >> im
         rca >> rem
-        rem >> Edge(label="reset chaos / propose", style="dotted") >> checkout
+        rem >> Edge(label="chaos reset / propose", style="dotted") >> checkout
 
-        # Learn + operator deep-link
+        # Learn + deep-link
         im >> feedback
         im >> engqa
         console >> im
-        im >> Edge(label="🔍 Tempo Explore") >> grafana
+        im >> Edge(label="View Trace / topology") >> grafana
         feedback >> Edge(style="dotted") >> prom
         engqa >> Edge(style="dotted") >> prom
 

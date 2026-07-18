@@ -5,63 +5,78 @@ Use this script when presenting to a senior SRE / Platform hiring manager.
 ## Elevator pitch (20 seconds)
 
 > “This is a **closed-loop AIOps** stack on OpenTelemetry + Grafana LGTM.  
+> Four commerce services form a real dependency graph — checkout calls inventory and payment, payment calls fraud.  
 > We don’t just fire alerts — we **explain** the anomaly, open a ticket,  
-> **ground** RCA in metrics/logs/traces (Bedrock), deep-link the **trace**,  
+> **ground** RCA in metrics/logs/traces (Bedrock or config-driven rules), deep-link the **trace**,  
 > propose **risk-gated** remediation, and feed **human thumbs** back into quality metrics.”
 
 ## Scene-by-scene
 
-### Scene 1 — Customer pain
+### Scene 1 — Customer pain + topology
 
-- Open Grafana (optional) and checkout health.
-- Run: `python scripts/demo_story.py`
-- **Say:** “A checkout request starts failing / slowing because of chaos on the path to payment.”
+- Show topology diagram (`docs/topology-demo-apps.png`) or Mermaid in README.
+- Run multi-hop chaos, e.g.:
+
+```bash
+python scripts/chaos.py --service fraud --error-rate 0.6 --fault-mode scoring_timeout
+python scripts/dynamic_load.py --profile demo --stage-seconds 12
+# or: python scripts/demo_story.py
+```
+
+- **Say:** “Checkout fails because of a **dependency** — not always the ticket owner. Topology exists so we don’t restart the wrong service.”
 
 ### Scene 2 — Explainable detection
 
 - Point at the printed `explanation` line, e.g.  
   `http_error_rate=0.45 is 3.2σ above EWMA baseline …`
-- **Say:** “Hybrid detection: EWMA/z-score for *explainability*, IsolationForest for joint outliers, absolute thresholds as cold-start safety.  
-  We choose hybrid because pure ML is opaque and cold-start blind; pure thresholds miss novel shapes.”
+- **Say:** “Hybrid detection: EWMA/z-score for *explainability*, IsolationForest for joint outliers, absolute thresholds as cold-start safety.”
 
 ### Scene 3 — Correlation & ticket
 
 - Open http://localhost:8002/
 - Show title, severity, explainability column.
-- **Say:** “Same service+metric within a window correlates into one ticket — noise reduction is an SRE feature, not a nice-to-have.”
+- **Say:** “Same service+metric within a window correlates into one ticket — noise reduction is an SRE feature.”
 
-### Scene 4 — Grounded RCA + Trace experience
+### Scene 4 — Grounded RCA + Trace + topology panel
 
-- Click the incident → **🔍 Xem Trace**
-- Grafana Explore opens Tempo with the primary slow/error trace (or service error TraceQL).
-- **Say:** “RCA is forbidden from inventing evidence. It only reasons over Prom/Loki/Tempo packs and returns strict JSON.  
-  Trace UX is deliberate: on-call time is the scarce resource — zero copy/paste of trace IDs.”
+- Click the incident → **🔍 View Trace**
+- Show **Service topology** card (upstream/downstream).
+- Grafana Explore opens Tempo with the primary slow/error trace.
+- **Say:** “RCA is forbidden from inventing evidence. Patterns come from `rca_patterns.yaml`; multi-hop blame uses neighbor RED + logs.  
+  Trace UX: zero copy/paste of trace IDs.”
 
 ### Scene 5 — Gated remediation
 
 - Open http://localhost:8501
-- Show low-risk auto vs high-risk approval.
+- Show low-risk auto vs high-risk approval (optional API key).
 - **Say:** “Auto-remediation without gates is how bots amplify outages. Restart/scale stay human-approved.”
 
-### Scene 6 — Feedback & self-monitoring
+### Scene 6 — Feedback, eval, honesty
 
-- Open http://localhost:8502 → thumbs.
-- Show http://localhost:8005/metrics (`feedback_positive_rate`, `rca_accuracy_estimate`, `false_positive_count`).
-- **Say:** “AIOps must observe itself. High FP rate drives threshold suggestions — not silent model drift.”
+- Open http://localhost:8502 → thumbs; or Engine QA :8503.
+- Mention offline suite: `bash scripts/run-evaluation.sh` · `report_summary.py`.
+- **Say:** “Offline scores are a regression gate for the pattern catalog — not a claim of perfect prod ML. Live path uses real chaos + OTel.”
 
 ## Why this impresses seniors
 
 | Bar | How we hit it |
 |-----|----------------|
-| Safety | Risk gates, rule fallback, fail-open telemetry |
-| Cost | Bedrock only on ticket path; Prom pull not full stream processing |
-| Explainability | Sigma/EWMA narratives + method_details |
+| Safety | Risk gates, rule fallback, optional API key |
+| Cost | Decision Engine owns LLM; medium band only |
+| Explainability | Sigma/EWMA narratives + config patterns |
+| Topology | 4 real apps + wrong-hop / multi-hop scenarios |
 | Operability | One-click traces, healthchecks, compose one-shot |
-| Learning loop | Feedback metrics + threshold advisor |
+| Learning loop | Feedback metrics + Engine QA + CI baselines |
 
 ## Anti-patterns we deliberately avoided
 
 - Black-box “AI says restart everything”
 - Ungrounded LLM RCA from the ticket title alone
+- Hard-coded `if scenario_id` RCA branches
 - Auto-scale on every blip without correlation
-- Demo-only scripts with no production commentary
+- Claiming offline 100% accuracy as production quality
+
+## Optional deep-dive: Astronomy Shop
+
+If the laptop has RAM: `scripts/astronomy/start.ps1` — full OpenTelemetry Demo (~12 services).  
+Default demo stays on 4-app compose so interviews don’t depend on multi-GB pulls.

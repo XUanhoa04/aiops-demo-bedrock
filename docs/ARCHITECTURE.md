@@ -1,67 +1,83 @@
 # Architecture & production trade-offs
 
-This document is the **honest** companion to the README: what we built, why, and what is deliberately *not* production.
+Honest companion to the README: what we built, why, and what is deliberately *not* production.
 
 ## System diagram
 
-Architecture as code via [diagrams.mingrammer.com](https://diagrams.mingrammer.com/)  
-(source: [`generate_architecture_diagram.py`](generate_architecture_diagram.py)).
-
 ![SentinelLoop architecture](architecture-sentinel-loop.png)
 
-Regenerate after structural changes:
+Sources:
+
+- Graphviz: [`architecture-sentinel-loop.dot`](architecture-sentinel-loop.dot)
+- Python (optional): [`generate_architecture_diagram.py`](generate_architecture_diagram.py)
 
 ```bash
-# needs: pip install diagrams  +  Graphviz (`dot` on PATH)
+# Graphviz (recommended)
+dot -Tpng -Gdpi=150 -o docs/architecture-sentinel-loop.png docs/architecture-sentinel-loop.dot
+dot -Tpng -Gdpi=150 -o docs/topology-demo-apps.png docs/topology-demo-apps.dot
+
+# or diagrams.mingrammer.com (needs Graphviz + pip install diagrams)
 python docs/generate_architecture_diagram.py
+python docs/generate_topology_diagram.py
 ```
+
+## Demo app topology
+
+![Demo topology](topology-demo-apps.png)
+
+```text
+checkout-service (:8080)
+  ├─► inventory-service (:8082)   stock reserve
+  └─► payment-service   (:8081)
+        └─► fraud-service (:8083) scoring
+```
+
+Catalog: `config/service_topology.yaml`.  
+Optional multi-tenant-scale graph: Astronomy Shop — [`OTEL_DEMO.md`](OTEL_DEMO.md).
 
 ## Pipeline (logical)
 
 ```
-checkout/payment (OTel)
-        │
-        ▼
-   LGTM (Prom / Loki / Tempo)
-        │ PromQL pull
-        ▼
- anomaly-detector ── hybrid score + multi-signal context + confidence
-        │ Redis: aiops:anomalies
-        ▼
+checkout → inventory
+   └────► payment → fraud     (OTel → LGTM)
+              │
+              ▼
+         LGTM (Prom / Loki / Tempo)
+              │ PromQL pull
+              ▼
+ anomaly-detector ── hybrid score + multi-signal confidence
+              │ Redis: aiops:anomalies
+              ▼
  incident-manager (tickets, correlation, topology UI, Trace deep-links)
-        │
-        ▼  ★ single control plane (default)
+              │
+              ▼  ★ single control plane (default)
  decision-engine (policy: auto / RCA / escalate)
-        │
-        ├ conf < 60 ──────────────► escalate (no LLM)
-        ├ conf ≥ 85 + pattern ────► remediation propose (gated, no force)
-        └ medium / high no-pattern ► rca-engine
-                                      ├ topology catalog + neighbor expand
-                                      └ Bedrock | topology-aware rules
-                                            │
-                                            ▼
-                                      remediation (risk-gated + optional API key)
-                                            │
-                                            ▼
-                                      feedback / engine-qa
+              │
+              ├ conf < 60 ──────────────► escalate (no LLM)
+              ├ conf ≥ 85 + pattern ────► remediation propose (gated, no force)
+              └ medium / high no-pattern ► rca-engine
+                                            ├ topology neighbors
+                                            ├ config/rca_patterns.yaml
+                                            └ Bedrock | rule fallback
+                                                  │
+                                                  ▼
+                                            remediation (risk-gated + optional API key)
+                                                  │
+                                                  ▼
+                                            feedback / engine-qa
 ```
 
-**Control-plane invariant:** Incident Manager does **not** call RCA by default.
-`ENABLE_DIRECT_RCA_FANOUT=true` restores the legacy dual path for demos that skip DE.
-RCA Redis poll defaults **off** so `aiops:incidents` is not a second auto-RCA path.
+**Control-plane invariant:** Incident Manager does **not** call RCA by default.  
+`ENABLE_DIRECT_RCA_FANOUT=true` restores the legacy dual path.  
+RCA Redis poll defaults **off**.
 
 ## Topology (RCA)
 
-**Default (mini apps):** `config/service_topology.yaml` (checkout → payment + shared redis/DB).
+**Default:** 4 running apps + static catalog (+ Tempo-inferred edges).
 
-**Optional (Astronomy Shop):** `config/service_topology_astronomy.yaml` + OpenTelemetry Demo
-microservices exporting OTLP into LGTM — see [`OTEL_DEMO.md`](OTEL_DEMO.md).
+At gather time RCA expands **upstream/downstream** neighbors into `EvidencePack` and prefers a sicker dependency as `root_cause` when margins match (wrong-hop avoidance).
 
-At gather time RCA also merges **runtime edges** from Tempo (`root_service` / patterns)
-and pulls RED + error logs for **upstream/downstream** neighbors into `EvidencePack`.
-
-Rule + prompt policy: if an upstream is significantly sicker (error/latency margin +
-logs), prefer that dependency as `root_cause` — avoid wrong-hop blame on the ticket owner.
+**Rule patterns** are data-driven: `config/rca_patterns.yaml` via `aiops_shared.rca_patterns` — extend synonyms in YAML, not `if scenario_id` in Python.
 
 ## Why these algorithms & weights
 
@@ -73,6 +89,7 @@ logs), prefer that dependency as `root_cause` — avoid wrong-hop blame on the t
 | Confidence 40/30/20/10 (metrics/traces/logs/events) | Detector is metric-first; traces beat logs for RCA; events sparse |
 | Decision bands 85 / 60 | High conf + known pattern → gated remediate; medium → LLM; low → escalate |
 | Bedrock only on medium band | Cost control — don’t spend tokens on obvious chaos resets or empty context |
+| Config pattern catalog | Ops can add fault synonyms without code; still explainable rules |
 
 ## What is demo-grade (not full prod)
 
@@ -81,10 +98,10 @@ logs), prefer that dependency as `root_cause` — avoid wrong-hop blame on the t
 | Queue | Redis LIST LPUSH/BRPOP | Kafka / SQS / Redis Streams + consumer groups + DLQ |
 | Tickets | SQLite file volume | Postgres / Jira / PagerDuty |
 | Detector state | In-process deques | Feature store / stream processor; survive restarts |
-| Auth | Open APIs on localhost | mTLS, SSO, RBAC on approve/execute |
+| Auth | Optional `REMEDIATION_API_KEY`; open localhost APIs | mTLS, SSO, RBAC on approve/execute |
 | Multi-tenant | Single compose network | Namespace isolation, per-tenant quotas |
-| Topology | Mini: 2-app YAML; optional **Astronomy Shop** multi-service graph | Mesh/CMDB service graph + continuous discovery |
-| Eval dataset | ~30 RCA + ~20 anomaly (core/holdout) | Larger labeled set + shadow traffic + human agreement |
+| Topology | 4-app YAML + optional Astronomy Shop | Mesh/CMDB service graph + continuous discovery |
+| Eval dataset | ~42 RCA + ~28 anomaly (core/holdout) | Larger labeled set + shadow traffic + human agreement |
 | Auto-remediation | Propose / low-risk chaos reset only | Change windows, canary, automated rollback |
 
 ## Safety invariants (keep these)
@@ -101,29 +118,23 @@ logs), prefer that dependency as `root_cause` — avoid wrong-hop blame on the t
 2. Context gather (parallel Prom/Loki/Tempo) → completeness ratio.
 3. Confidence scorer → 0–100 + breakdown.
 4. Publish AnomalyEvent (context embeds confidence for Decision Engine).
-5. IM correlates → ticket; optional RCA fan-out.
-6. Decision Engine policy row → escalate / RCA suggest / gated remediate.
-7. On-call reviews in Engine QA → precision / hallucination / tuning advice.
-
-## Rule RCA is config-driven (not hard-coded per scenario)
-
-Fault classes live in **`config/rca_patterns.yaml`** (loaded by
-`aiops_shared.rca_patterns`). Python only:
-
-1. Cites grounded EvidencePack fields  
-2. Runs generic pattern match (log phrases + change_event types)  
-3. Applies topology “prefer sicker upstream”  
-4. Applies metric/insufficient fallbacks from the same YAML  
-
-**Do not** add `if scenario_id == ...` branches. To support a new failure mode,
-add synonyms / templates to the YAML catalog.
+5. IM correlates → ticket; Decision Engine routes.
+6. Medium band → RCA (evidence + topology + patterns / Bedrock).
+7. On-call reviews in Feedback / Engine QA → precision / hallucination / tuning advice.
 
 ## Evaluation honesty
 
-- Offline RCA uses the **same** config-driven `rule_based_rca` path as production fallback.
-- Scoring requires **fault-class** agreement and wrong-hop service guards.
-- Scenarios are tagged `split: core | holdout` (~40 RCA, ~28 anomaly).
-- CI: anomaly overall F1 ≥ 0.70 + core F1 ≥ 0.75; RCA overall ≥ 0.70 + holdout ≥ 0.55;
-  system must beat naive baselines.
-- High offline scores mean “catalog covers the regression suite”, **not** learned
-  ML generalization or production-perfect RCA.
+See [`EVALUATION.md`](EVALUATION.md).
+
+- Offline RCA uses the same **config-driven** `rule_based_rca` path as production fallback.
+- Report **core vs holdout**; optional `--compare` for rule vs Bedrock.
+- Live e2e: `evaluation/evaluate_live_e2e.py` (real chaos + OTel).
+- High offline scores = regression coverage of the catalog, **not** learned ML perfection.
+
+## Optional modes
+
+| Mode | How | When |
+|------|-----|------|
+| **Default 4-app** | `docker compose up -d --build` | CI, daily demo, multi-hop topology |
+| **Astronomy Shop** | `scripts/astronomy/start.ps1` | Full OTel Demo (~12 services) |
+| **Legacy dual RCA fan-out** | `ENABLE_DIRECT_RCA_FANOUT=true` | Debug only |

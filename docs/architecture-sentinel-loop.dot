@@ -1,0 +1,95 @@
+// SentinelLoop architecture — render with Graphviz
+// docker run --rm -v "${PWD}/docs:/data" stefanscherer/dot -Tpng -o /data/architecture-sentinel-loop.png /data/architecture-sentinel-loop.dot
+digraph SentinelLoop {
+  rankdir=TB;
+  bgcolor="white";
+  fontname="Helvetica";
+  fontsize=14;
+  node [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", fillcolor="#F5F8FC", color="#2C3E50"];
+  edge [fontname="Helvetica", fontsize=9, color="#34495E"];
+
+  op [label="Operator / On-call", shape=ellipse, fillcolor="#E8F5E9"];
+
+  subgraph cluster_apps {
+    label="1 · Demo apps (4-service topology + OTel)";
+    style=filled; fillcolor="#EEF6FF"; color="#5B9DFF";
+    checkout [label="checkout-service\n:8080"];
+    inventory [label="inventory-service\n:8082"];
+    payment [label="payment-service\n:8081"];
+    fraud [label="fraud-service\n:8083"];
+    checkout -> inventory [label="POST /reserve"];
+    checkout -> payment [label="POST /pay"];
+    payment -> fraud [label="POST /score"];
+  }
+
+  subgraph cluster_lgtm {
+    label="2 · Observability (Grafana LGTM)";
+    style=filled; fillcolor="#FFF8E7"; color="#E6A23C";
+    prom [label="Prometheus\nRED metrics", fillcolor="#FFE0B2"];
+    loki [label="Loki\nlogs", fillcolor="#FFE0B2"];
+    tempo [label="Tempo\ntraces", fillcolor="#FFE0B2"];
+    grafana [label="Grafana\nExplore deep-links", fillcolor="#FFCC80"];
+    prom -> grafana;
+    loki -> grafana;
+    tempo -> grafana;
+  }
+
+  subgraph cluster_detect {
+    label="3 · Detect & score";
+    style=filled; fillcolor="#F3E5F5"; color="#8E24AA";
+    det [label="anomaly-detector\nEWMA · Z · STL · IForest\n+ multi-signal confidence", fillcolor="#E1BEE7"];
+    redis [label="Redis\naiops:anomalies", fillcolor="#CE93D8"];
+  }
+
+  subgraph cluster_control {
+    label="4 · Single control plane";
+    style=filled; fillcolor="#E8F5E9"; color="#2E7D32";
+    im [label="incident-manager\ntickets · topology UI · Trace links", fillcolor="#C8E6C9"];
+    de [label="decision-engine\n≥85 rem · 60–85 RCA · <60 escalate", fillcolor="#A5D6A7"];
+    rca [label="rca-engine\ntopology + rca_patterns.yaml\nBedrock | rule fallback", fillcolor="#81C784"];
+    rem [label="remediation\nrisk-gated + optional API key", fillcolor="#66BB6A"];
+    topo [label="config/\ntopology + patterns", shape=cylinder, fillcolor="#A5D6A7"];
+  }
+
+  subgraph cluster_learn {
+    label="5 · Learn (meta-SLOs)";
+    style=filled; fillcolor="#E3F2FD"; color="#1565C0";
+    fb [label="feedback-collector", fillcolor="#BBDEFB"];
+    qa [label="engine-qa\nprecision · FP · hallucination", fillcolor="#90CAF9"];
+    console [label="aiops-console\n:8500", fillcolor="#64B5F6"];
+  }
+
+  op -> checkout [label="load / chaos"];
+  op -> console;
+  op -> grafana;
+  op -> rem;
+
+  checkout -> prom [style=dashed, color="#666", label="OTLP"];
+  inventory -> prom [style=dashed, color="#666"];
+  payment -> prom [style=dashed, color="#666"];
+  fraud -> prom [style=dashed, color="#666"];
+  checkout -> loki [style=dashed, color="#666"];
+  payment -> tempo [style=dashed, color="#666"];
+
+  prom -> det [label="PromQL pull"];
+  det -> redis [label="AnomalyEvent + conf"];
+  redis -> im;
+  det -> im [label="webhook", style=dotted];
+
+  im -> de [label="policy only"];
+  de -> rca [label="medium / unknown"];
+  de -> rem [label="high + pattern"];
+  topo -> rca [label="neighbors + patterns"];
+  prom -> rca [style=dashed, color="#2E86AB"];
+  loki -> rca [style=dashed, color="#2E86AB"];
+  tempo -> rca [style=dashed, color="#2E86AB"];
+
+  rca -> im [label="root_cause + trace_id"];
+  rca -> rem;
+  rem -> checkout [style=dotted, label="chaos reset / propose"];
+
+  im -> fb;
+  im -> qa;
+  console -> im;
+  im -> grafana [label="View Trace / topology"];
+}

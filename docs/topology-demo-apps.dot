@@ -1,0 +1,32 @@
+// Demo service topology — 4 microservices
+// docker run --rm -v "${PWD}/docs:/data" stefanscherer/dot -Tpng -o /data/topology-demo-apps.png /data/topology-demo-apps.dot
+digraph Topology {
+  rankdir=LR;
+  bgcolor="white";
+  fontname="Helvetica";
+  fontsize=14;
+  node [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled", fillcolor="#E3F2FD", color="#1565C0"];
+  edge [fontname="Helvetica", fontsize=10];
+
+  label="SentinelLoop default demo topology";
+  labelloc=t;
+
+  checkout [label="checkout-service\n:8080", fillcolor="#BBDEFB"];
+  inventory [label="inventory-service\n:8082", fillcolor="#C8E6C9"];
+  payment [label="payment-service\n:8081", fillcolor="#FFE0B2"];
+  fraud [label="fraud-service\n:8083", fillcolor="#F8BBD9"];
+
+  redis [label="redis-cache\n(shared)", shape=cylinder, fillcolor="#FFF9C4", color="#F9A825"];
+  pg [label="postgres\norders / payments / inventory", shape=cylinder, fillcolor="#FFF9C4", color="#F9A825"];
+
+  checkout -> inventory [label="POST /reserve", color="#2E7D32"];
+  checkout -> payment [label="POST /pay", color="#E65100"];
+  payment -> fraud [label="POST /score", color="#AD1457"];
+
+  inventory -> redis [style=dashed, color="#888"];
+  payment -> redis [style=dashed, color="#888"];
+  fraud -> redis [style=dashed, color="#888"];
+  checkout -> pg [style=dashed, color="#888"];
+  inventory -> pg [style=dashed, color="#888"];
+  payment -> pg [style=dashed, color="#888"];
+}

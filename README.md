@@ -34,7 +34,7 @@ powershell -ExecutionPolicy Bypass -File scripts/astronomy/start.ps1
 py -3.11 scripts/astronomy/set_flag.py paymentFailure on
 ```
 
-Guide: [`docs/OTEL_DEMO.md`](docs/OTEL_DEMO.md). Default compose still uses the lightweight 2-app mode for CI/laptops.
+Guide: [`docs/OTEL_DEMO.md`](docs/OTEL_DEMO.md). Default compose uses a **4-service** laptop topology (`checkout → inventory|payment → fraud`); Astronomy Shop is opt-in.
 
 ---
 
@@ -68,20 +68,41 @@ Full diagram & decision rationale: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.
 
 ## Architecture
 
-Full diagram ([diagrams.mingrammer.com](https://diagrams.mingrammer.com/)) — see also [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md):
+Full diagram — see also [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md):
 
 ![SentinelLoop architecture](docs/architecture-sentinel-loop.png)
 
 ```bash
-# Regenerate PNG (needs Graphviz + pip install diagrams)
-python docs/generate_architecture_diagram.py
+# Regenerate PNGs (needs Graphviz `dot` on PATH; optional: pip install diagrams)
+dot -Tpng -Gdpi=150 -o docs/architecture-sentinel-loop.png docs/architecture-sentinel-loop.dot
+dot -Tpng -Gdpi=150 -o docs/topology-demo-apps.png docs/topology-demo-apps.dot
+# or: python docs/generate_architecture_diagram.py && python docs/generate_topology_diagram.py
 ```
+
+### Demo service topology (default compose)
+
+Four OTel-emitting apps with real HTTP dependencies (multi-hop traces + wrong-hop RCA):
+
+![Demo topology](docs/topology-demo-apps.png)
+
+```mermaid
+flowchart LR
+  CO[checkout-service :8080]
+  INV[inventory-service :8082]
+  PAY[payment-service :8081]
+  FR[fraud-service :8083]
+  CO -->|POST /reserve| INV
+  CO -->|POST /pay| PAY
+  PAY -->|POST /score| FR
+```
+
+Catalog: `config/service_topology.yaml` · Chaos: `scripts/chaos.py --service inventory|fraud|…`
 
 ### Control plane (Mermaid)
 
 ```mermaid
 flowchart TD
-  Apps[checkout inventory payment fraud OTel] --> LGTM[LGTM Prom Loki Tempo]
+  Apps[checkout · inventory · payment · fraud] --> LGTM[LGTM Prom Loki Tempo]
   LGTM --> Det[anomaly-detector hybrid + confidence]
   Det -->|Redis anomalies| IM[incident-manager tickets + UI]
   IM -->|policy only| DE[decision-engine]
@@ -94,11 +115,11 @@ flowchart TD
 ```
 
 **Invariant:** RCA/LLM is invoked by **Decision Engine**, not on every ticket.
-Set `ENABLE_DIRECT_RCA_FANOUT=true` only for legacy dual-path demos.
+Config-driven rules live in `config/rca_patterns.yaml` (not hard-coded per scenario).
 
 ### Pipeline stages
 
-1. **Observability** — Apps export OTLP to LGTM (metrics + traces; logs when available).
+1. **Observability** — 4 apps export OTLP to LGTM (metrics + logs + traces).
 2. **Anomaly detection** — Hybrid EWMA/z-score/STL + IsolationForest; multi-signal confidence 0–100.
 3. **Correlation & incident** — Same service+metric window → one ticket (noise control).
 4. **Decision Engine** — conf≥85 + known pattern → gated remediate; 60–85 → RCA/LLM; &lt;60 → escalate.
@@ -216,14 +237,16 @@ python scripts/dynamic_load.py --profile demo
 python scripts/dynamic_load.py --profile demo --stage-seconds 15
 ```
 
-Each stage POSTs `/chaos` on checkout/payment (`error_rate`, `extra_latency_ms`, **`fault_mode`**) and drives concurrent `/checkout` traffic so RED metrics, error logs, and traces move together.
+Each stage injects chaos and drives concurrent `/checkout` traffic so RED metrics, error logs, and **multi-hop traces** (checkout → inventory|payment → fraud) move together.
 
 ### Single chaos knobs
 
 ```bash
 python scripts/chaos.py --service payment --error-rate 0.4 --fault-mode db_pool
+python scripts/chaos.py --service inventory --error-rate 0.5 --fault-mode stock_lock
+python scripts/chaos.py --service fraud --error-rate 0.6 --fault-mode scoring_timeout
 python scripts/chaos.py --service checkout --extra-latency-ms 1200 --fault-mode cache_miss
-python scripts/chaos.py --reset
+python scripts/chaos.py --reset   # all four apps
 ```
 
 ### Scenario from evaluation dataset
@@ -241,47 +264,30 @@ Fault modes emit production-like log lines, e.g. *database connection pool exhau
 
 ## How to Run RCA Evaluation
 
-Mini ground-truth set: **10 RCA scenarios** + **8 anomaly series** under `evaluation/`.
+Offline suite under `evaluation/` (~**42 RCA** + ~**28 anomaly**, core/holdout).  
+Guide: [`docs/EVALUATION.md`](docs/EVALUATION.md).
 
 ```bash
-# One command — offline anomaly + RCA (no AWS required)
+# One command — offline anomaly + RCA + baselines (no AWS required)
 bash scripts/run-evaluation.sh
+python evaluation/report_summary.py
 
-# With live stack RCA API:
-bash scripts/run-evaluation.sh --online
+# Optional: rule vs Bedrock compare (needs AWS keys)
+bash scripts/run-evaluation.sh --compare
 
-# Plus dynamic load after scoring:
-bash scripts/run-evaluation.sh --with-load
+# Optional: live e2e (stack up)
+python evaluation/evaluate_live_e2e.py --limit 5 --split core
 ```
 
-Or step-by-step:
-
-```bash
-pip install pyyaml
-python evaluation/evaluate_anomaly.py
-python evaluation/evaluate_rca.py --mode offline
-# optional Bedrock:
-python evaluation/evaluate_rca.py --mode offline --bedrock
-python evaluation/evaluate_rca.py --mode online
-```
-
-### Sample evaluation results (offline)
+### Sample evaluation gates (offline)
 
 | Suite | Metric | Notes |
 |-------|--------|--------|
 | **Anomaly** (~28, core+holdout) | Overall F1 ≥ 0.70; **core** F1 ≥ 0.75 | Uni + seasonal + multivariate IF |
-| **RCA** (~40, core+holdout) | Overall ≥ 0.70; **holdout** ≥ 0.55 | Config patterns in `config/rca_patterns.yaml` — not per-scenario if/else |
+| **RCA** (~42, core+holdout) | Overall ≥ 0.70; **holdout** ≥ 0.55 | `config/rca_patterns.yaml` + topology multi-hop |
 | **Baselines** | System must **beat** random / always-error / empty | Prevents “dataset overfit” theater |
 
-RCA rules are **data-driven** (`config/rca_patterns.yaml`). Offline scores = regression coverage of that catalog, not a claim of learned ML quality. Report **core vs holdout** separately.
-
-```bash
-bash scripts/run-evaluation.sh
-python evaluation/evaluate_baselines.py --require-beats-baselines
-```
-
-Artifacts: `evaluation/results/{anomaly,rca,baselines}_latest.json`.  
-Definitions: [`evaluation/README.md`](evaluation/README.md).
+Offline scores measure **catalog/regression coverage**, not production-perfect ML. Artifacts: `evaluation/results/*_latest.json`.
 
 ### One-shot demo (for your video)
 
@@ -323,24 +329,34 @@ Full talk track: **[docs/DEMO_STORY.md](docs/DEMO_STORY.md)** · Video shot list
 
 ```text
 aiops-demo-bedrock/
-├── docker-compose.yml
+├── docker-compose.yml              # default 4-app + AIOps stack
+├── docker-compose.astronomy.yml    # optional OTel Demo mode
 ├── .env.example
-├── apps/                      # OTel-emitting demo services (+ chaos)
+├── apps/
+│   ├── checkout-service/           # :8080 entry → inventory + payment
+│   ├── payment-service/            # :8081 → fraud
+│   ├── inventory-service/          # :8082 stock reserve
+│   ├── fraud-service/              # :8083 scoring
+│   └── tests/                      # app + topology unit tests
 ├── aiops-services/
-│   ├── anomaly-detector/      # hybrid + confidence
-│   ├── incident-manager/      # tickets + trace/topology console
-│   ├── decision-engine/       # single control plane (auto/RCA/escalate)
-│   ├── rca-engine/            # topology-aware Bedrock RCA + rules
-│   ├── remediation/           # gated actions + optional API key
-│   ├── feedback-collector/    # review loop
-│   ├── engine-qa/             # meta precision / hallucination
-│   └── aiops-console/         # unified Streamlit
-├── config/service_topology.yaml
-├── evaluation/                # offline RCA + anomaly + baselines
-├── shared/aiops_shared/       # models, topology, OTEL, grafana_links
+│   ├── anomaly-detector/           # hybrid + confidence
+│   ├── incident-manager/           # tickets + Trace / topology UI
+│   ├── decision-engine/            # single control plane
+│   ├── rca-engine/                 # topology + patterns + Bedrock/rules
+│   ├── remediation/                # risk-gated + optional API key
+│   ├── feedback-collector/
+│   ├── engine-qa/
+│   └── aiops-console/              # :8500
+├── config/
+│   ├── service_topology.yaml       # default 4-app graph
+│   ├── service_topology_astronomy.yaml
+│   └── rca_patterns.yaml           # config-driven rule RCA
+├── evaluation/                     # offline + live e2e + baselines
+├── integrations/astronomy-shop/    # OTel Demo bridge (optional)
+├── shared/aiops_shared/
 ├── observability/
-├── docs/
-└── scripts/
+├── docs/                           # ARCHITECTURE, EVALUATION, OTEL_DEMO, diagrams
+└── scripts/                        # chaos, load, astronomy/*, demo_*
 ```
 
 ---
@@ -362,7 +378,7 @@ aiops-demo-bedrock/
 - Auto-restart everything on every alert  
 - Ungrounded “ChatGPT ops” from the ticket title alone  
 - Hiding ML scores without an English explanation  
-- Multi-GB full OpenTelemetry Demo by default (apps/ stand-in keeps the laptop usable; LGTM remains the real backbone)
+- Multi-GB full OpenTelemetry Demo by default (4-app topology is default; Astronomy Shop is opt-in — see `docs/OTEL_DEMO.md`)
 
 ---
 

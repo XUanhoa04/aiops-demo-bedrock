@@ -43,9 +43,9 @@ I care about systems that **fail safely** and **explain themselves** to on-call 
       </h3>
       <p>
         Explainable <strong>AIOps closed loop</strong>:<br/>
-        hybrid anomaly detection · multi-signal confidence · decision engine ·
-        topology-aware RCA (Amazon Bedrock + rule fallback) · risk-gated remediation ·
-        Engine QA / offline eval + CI.
+        4-service OTel topology · hybrid detection · decision engine ·
+        topology-aware RCA (Bedrock + config-driven rules) · risk-gated remediation ·
+        offline eval + CI baselines.
       </p>
       <p>
         <a href="https://github.com/XUanhoa04/aiops-demo-bedrock"><img src="https://img.shields.io/github/stars/XUanhoa04/aiops-demo-bedrock?style=flat-square&logo=github&label=stars" alt="stars" /></a>
@@ -71,7 +71,8 @@ I care about systems that **fail safely** and **explain themselves** to on-call 
   | Safety | High-risk remediations need approval; LLM falls back to rules |
   | Explainability | EWMA / σ narratives, not black-box scores alone |
   | Grounded GenAI | RCA only reasons over Prom / Loki / Tempo + topology |
-  | Measurable quality | Offline anomaly F1 + RCA accuracy vs naive baselines in CI |
+  | Topology | checkout→inventory\|payment→fraud (real multi-hop traces) |
+  | Measurable quality | Offline anomaly F1 + RCA holdout vs naive baselines in CI |
 
 </details>
 
