@@ -7,6 +7,9 @@
 credentials*
 .aws/
 
+# Cloned OpenTelemetry Demo (Astronomy Shop) — multi-GB, not vendored
+third_party/
+
 # Python
 __pycache__/
 *.py[cod]

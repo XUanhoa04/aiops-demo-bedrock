@@ -24,6 +24,18 @@ Without AWS keys, RCA still runs via **rule-based fallback** (safety over silenc
 Offline quality gates (no Docker required for unit/eval): `bash scripts/run-evaluation.sh` or `make ci`.  
 Full eval guide: [`docs/EVALUATION.md`](docs/EVALUATION.md) · summary: `python evaluation/report_summary.py`.
 
+### Optional: OpenTelemetry Demo (Astronomy Shop)
+
+For a **real multi-service topology** (~12 services, OTLP-native, load generator, flagd chaos):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/astronomy/start.ps1
+# Frontend http://localhost:8080 · Flagd http://localhost:4000 · Grafana :3000 · Incidents :8002
+py -3.11 scripts/astronomy/set_flag.py paymentFailure on
+```
+
+Guide: [`docs/OTEL_DEMO.md`](docs/OTEL_DEMO.md). Default compose still uses the lightweight 2-app mode for CI/laptops.
+
 ---
 
 ## Why this project (for hiring managers)

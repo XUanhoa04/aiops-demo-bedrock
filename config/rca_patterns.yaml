@@ -163,6 +163,45 @@ patterns:
       - "Reduce lock scope or scale inventory"
     base_confidence: 66
 
+  # OpenTelemetry Demo / Astronomy Shop fault language (flagd chaos)
+  - id: product_catalog_failure
+    fault_class: catalog
+    priority: 88
+    log_any:
+      - "product catalog"
+      - "productcatalog"
+      - "failed to get product"
+      - "product not found"
+      - "catalog failure"
+    force_service: product-catalog
+    prefer_upstream_if_sicker: true
+    root_cause_template: "product-catalog failure cascading into cart/checkout"
+    why: "Product catalog errors break cart and checkout dependency chain."
+    runbook: "product-catalog-failure"
+    actions:
+      - "Check product-catalog / flag productCatalogFailure"
+      - "Inspect catalog traces in Tempo"
+    base_confidence: 60
+
+  - id: cart_failure
+    fault_class: cart
+    priority: 87
+    log_any:
+      - "cart failure"
+      - "failed to get cart"
+      - "cart service"
+      - "empty cart"
+      - "valkey"
+    prefer_service_from_logs: true
+    force_service: cart
+    root_cause_template: "cart service failure / cart dependency errors"
+    why: "Cart errors block checkout; may also indicate Valkey session issues."
+    runbook: "cart-failure"
+    actions:
+      - "Toggle flag cartFailure off if demo"
+      - "Check valkey-cart and cart traces"
+    base_confidence: 58
+
   - id: post_deploy
     fault_class: change
     priority: 70

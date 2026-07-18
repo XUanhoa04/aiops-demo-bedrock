@@ -352,11 +352,19 @@ class EvidenceGatherer:
                 '/ clamp_min(sum(rate(http_server_request_duration_seconds_count'
                 '{{service_name="{svc}"}}[2m])), 1e-9)'
             ),
+            # Astronomy Shop / gRPC
+            (
+                'sum(rate(rpc_server_duration_milliseconds_count{{service_name="{svc}",'
+                'rpc_grpc_status_code!="0"}}[2m])) '
+                '/ clamp_min(sum(rate(rpc_server_duration_milliseconds_count'
+                '{{service_name="{svc}"}}[2m])), 1e-9)'
+            ),
         ]
         request_rate_q = [
             'sum(rate(demo_http_requests_total{{service_name="{svc}"}}[2m]))',
             'sum(rate(http_server_duration_milliseconds_count{{service_name="{svc}"}}[2m]))',
             'sum(rate(http_server_request_duration_seconds_count{{service_name="{svc}"}}[2m]))',
+            'sum(rate(rpc_server_duration_milliseconds_count{{service_name="{svc}"}}[2m]))',
         ]
         latency_p95_q = [
             (
@@ -365,6 +373,10 @@ class EvidenceGatherer:
             ),
             (
                 "histogram_quantile(0.95, sum(rate(http_server_duration_milliseconds_bucket"
+                '{{service_name="{svc}"}}[2m])) by (le)) / 1000'
+            ),
+            (
+                "histogram_quantile(0.95, sum(rate(rpc_server_duration_milliseconds_bucket"
                 '{{service_name="{svc}"}}[2m])) by (le)) / 1000'
             ),
         ]

@@ -1,0 +1,52 @@
+# =============================================================================
+# Override: AIOps stack in "Astronomy Shop" mode
+# =============================================================================
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.astronomy.yml up -d --build
+#   scripts/astronomy/start.ps1   # also starts OTel Demo + bridge
+#
+# Mini apps use Compose profiles `legacy-mini-apps` (not started by default).
+# Remediation depends_on checkout with required:false so AIOps can start alone.
+# =============================================================================
+
+services:
+  checkout-service:
+    profiles: ["legacy-mini-apps"]
+  payment-service:
+    profiles: ["legacy-mini-apps"]
+
+  aiops-anomaly-detector:
+    environment:
+      WATCHED_SERVICES: ${WATCHED_SERVICES:-frontend,checkout,cart,payment,shipping,currency,product-catalog,recommendation,ad,email,quote}
+      DETECTION_INTERVAL: ${DETECTION_INTERVAL:-20}
+      ZSCORE_THRESHOLD: ${ZSCORE_THRESHOLD:-2.8}
+      ERROR_RATE_THRESHOLD: ${ERROR_RATE_THRESHOLD:-0.12}
+      LATENCY_P95_SECONDS_THRESHOLD: ${LATENCY_P95_SECONDS_THRESHOLD:-1.0}
+
+  aiops-rca-engine:
+    environment:
+      TOPOLOGY_PATH: ${TOPOLOGY_PATH:-/app/config/service_topology_astronomy.yaml}
+      RCA_PATTERNS_PATH: ${RCA_PATTERNS_PATH:-/app/config/rca_patterns.yaml}
+      ENABLE_TOPOLOGY_EXPAND: "true"
+    volumes:
+      - ./config/service_topology_astronomy.yaml:/app/config/service_topology_astronomy.yaml:ro
+      - ./config/rca_patterns.yaml:/app/config/rca_patterns.yaml:ro
+
+  aiops-incident-manager:
+    environment:
+      TOPOLOGY_PATH: ${TOPOLOGY_PATH:-/app/config/service_topology_astronomy.yaml}
+    volumes:
+      - ./config/service_topology_astronomy.yaml:/app/config/service_topology_astronomy.yaml:ro
+
+  aiops-remediation:
+    depends_on:
+      aiops-incident-manager:
+        condition: service_healthy
+      checkout-service:
+        condition: service_started
+        required: false
+    environment:
+      SIMULATE_ONLY: ${SIMULATE_ONLY:-true}
+      CHECKOUT_URL: ${CHECKOUT_URL:-http://frontend-proxy:8080}
+      PAYMENT_URL: ${PAYMENT_URL:-http://payment:50051}

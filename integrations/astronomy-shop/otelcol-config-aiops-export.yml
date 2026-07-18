@@ -1,0 +1,31 @@
+# Copyright-compatible fragment for OpenTelemetry Demo collector.
+# Merged AFTER the demo's base otelcol-config so pipelines gain an exporter
+# that dual-writes telemetry into SentinelLoop's grafana/otel-lgtm.
+#
+# Usage (from opentelemetry-demo repo, after clone):
+#   OTEL_COLLECTOR_CONFIG_EXTRAS=/path/to/this/file
+#   # or mount as compose override for otel-collector --config
+
+exporters:
+  # LGTM accepts OTLP/HTTP on 4318 (preferred) and gRPC on 4317.
+  otlphttp/aiops-lgtm:
+    endpoint: http://aiops-lgtm:4318
+    tls:
+      insecure: true
+    compression: gzip
+
+  otlp/aiops-lgtm-grpc:
+    endpoint: aiops-lgtm:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      exporters: [otlphttp/aiops-lgtm, debug]
+    metrics:
+      exporters: [otlphttp/aiops-lgtm, debug]
+    logs:
+      exporters: [otlphttp/aiops-lgtm, debug]
+    # Some demo configs name pipelines differently; collector merge is additive
+    # for exporters when using multiple --config files carefully.

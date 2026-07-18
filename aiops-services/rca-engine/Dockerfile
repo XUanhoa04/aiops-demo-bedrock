@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY shared/requirements-base.txt /app/shared/requirements-base.txt
 COPY shared/aiops_shared /app/aiops_shared
 COPY config/service_topology.yaml /app/config/service_topology.yaml
+COPY config/service_topology_astronomy.yaml /app/config/service_topology_astronomy.yaml
 COPY config/rca_patterns.yaml /app/config/rca_patterns.yaml
 COPY aiops-services/rca-engine/requirements.txt /app/requirements.txt
 COPY aiops-services/rca-engine/app /app/app

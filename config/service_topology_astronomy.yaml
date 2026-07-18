@@ -1,0 +1,145 @@
+# =============================================================================
+# Service topology — OpenTelemetry Demo (Astronomy Shop)
+# =============================================================================
+#
+# Source graph (simplified from opentelemetry-demo):
+#   frontend → checkout → { cart, payment, shipping, currency, email, product-catalog }
+#   checkout → payment ; cart → product-catalog / valkey
+#   frontend → { ad, recommendation, product-catalog, cart, checkout }
+#
+# Use with DEMO_MODE=astronomy (see docs/OTEL_DEMO.md).
+# =============================================================================
+
+version: "2.0"
+description: "OpenTelemetry Astronomy Shop topology for topology-aware RCA"
+
+services:
+  frontend:
+    display_name: Frontend
+    depends_on:
+      - checkout
+      - cart
+      - product-catalog
+      - ad
+      - recommendation
+      - currency
+    shared_deps:
+      - frontend-proxy
+    aliases:
+      - frontend-web
+      - web
+
+  frontend-proxy:
+    display_name: Frontend Proxy (Envoy)
+    depends_on:
+      - frontend
+    shared_deps: []
+    aliases:
+      - envoy
+
+  checkout:
+    display_name: Checkout
+    depends_on:
+      - cart
+      - payment
+      - shipping
+      - currency
+      - email
+      - product-catalog
+    shared_deps: []
+    aliases:
+      - checkout-service
+
+  cart:
+    display_name: Cart
+    depends_on:
+      - product-catalog
+    shared_deps:
+      - valkey-cart
+    aliases:
+      - cart-service
+
+  payment:
+    display_name: Payment
+    depends_on: []
+    shared_deps: []
+    aliases:
+      - payment-service
+
+  shipping:
+    display_name: Shipping
+    depends_on:
+      - quote
+    shared_deps: []
+    aliases:
+      - shipping-service
+
+  quote:
+    display_name: Quote
+    depends_on: []
+    shared_deps: []
+    aliases:
+      - quote-service
+
+  currency:
+    display_name: Currency
+    depends_on: []
+    shared_deps: []
+    aliases:
+      - currency-service
+
+  product-catalog:
+    display_name: Product Catalog
+    depends_on: []
+    shared_deps: []
+    aliases:
+      - productcatalog
+      - product-catalog-service
+      - productcatalogservice
+
+  recommendation:
+    display_name: Recommendation
+    depends_on:
+      - product-catalog
+    shared_deps: []
+    aliases:
+      - recommendation-service
+
+  ad:
+    display_name: Ad
+    depends_on: []
+    shared_deps: []
+    aliases:
+      - ad-service
+      - adservice
+
+  email:
+    display_name: Email
+    depends_on: []
+    shared_deps: []
+    aliases:
+      - email-service
+
+  load-generator:
+    display_name: Load Generator
+    depends_on:
+      - frontend-proxy
+    shared_deps: []
+    aliases:
+      - loadgenerator
+
+shared_infrastructure:
+  valkey-cart:
+    kind: cache
+    notes: "Cart session store (Valkey/Redis) — cache failures surface as cart errors"
+  frontend-proxy:
+    kind: proxy
+    notes: "Envoy edge — entrypoint for browser + load-generator"
+  flagd:
+    kind: config
+    notes: "OpenFeature flagd — source of chaos/fault feature flags"
+
+rca_hints:
+  prefer_dependency_root_when_correlated: true
+  error_rate_neighbor_margin: 0.05
+  latency_neighbor_margin_seconds: 0.2

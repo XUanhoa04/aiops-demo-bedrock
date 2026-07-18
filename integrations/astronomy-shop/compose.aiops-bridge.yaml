@@ -1,0 +1,21 @@
+# Bridge OpenTelemetry Demo collector onto SentinelLoop network so it can
+# reach aiops-lgtm:4317/4318. Apply FROM the opentelemetry-demo directory:
+#
+#   docker compose -f compose.yaml -f compose.extras.yaml \
+#     -f /path/to/integrations/astronomy-shop/compose.aiops-bridge.yaml \
+#     --env-file .env --env-file .env.override up -d
+#
+# Requires AIOps stack already up (creates network aiops-demo-bedrock_aiops-net).
+
+services:
+  otel-collector:
+    networks:
+      - default
+      - aiops-net
+    # Append our exporter config if the demo image supports multiple --config.
+    # The start script also copies otelcol-config-aiops-export.yml into extras.
+
+networks:
+  aiops-net:
+    external: true
+    name: aiops-demo-bedrock_aiops-net

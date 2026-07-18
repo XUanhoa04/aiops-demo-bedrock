@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # PromQL templates — try demo-app custom metrics first, then OTel-style names,
 # then classic Prometheus RED names (http_requests_total / duration_seconds).
 ERROR_RATE_QUERIES = [
-    # Demo apps (checkout/payment) export these custom counters
+    # Mini demo apps (checkout/payment)
     (
         'sum(rate(demo_http_requests_total{{service_name="{svc}",status="error"}}[2m])) '
         '/ clamp_min(sum(rate(demo_http_requests_total{{service_name="{svc}"}}[2m])), 1e-9)'
@@ -39,11 +39,30 @@ ERROR_RATE_QUERIES = [
         'sum(rate(http_requests_total{{job="{svc}",code=~"5.."}}[2m])) '
         '/ clamp_min(sum(rate(http_requests_total{{job="{svc}"}}[2m])), 1e-9)'
     ),
-    # OTel histogram count with 5xx
+    # OTel HTTP histogram (Astronomy Shop / LGTM)
     (
         'sum(rate(http_server_duration_milliseconds_count{{service_name="{svc}",'
         'http_status_code=~"5.."}}[2m])) '
         '/ clamp_min(sum(rate(http_server_duration_milliseconds_count'
+        '{{service_name="{svc}"}}[2m])), 1e-9)'
+    ),
+    (
+        'sum(rate(http_server_request_duration_seconds_count{{service_name="{svc}",'
+        'http_status_code=~"5.."}}[2m])) '
+        '/ clamp_min(sum(rate(http_server_request_duration_seconds_count'
+        '{{service_name="{svc}"}}[2m])), 1e-9)'
+    ),
+    # gRPC services (payment, shipping, …) — non-OK status codes
+    (
+        'sum(rate(rpc_server_duration_milliseconds_count{{service_name="{svc}",'
+        'rpc_grpc_status_code!="0"}}[2m])) '
+        '/ clamp_min(sum(rate(rpc_server_duration_milliseconds_count'
+        '{{service_name="{svc}"}}[2m])), 1e-9)'
+    ),
+    (
+        'sum(rate(rpc_server_duration_seconds_count{{service_name="{svc}",'
+        'rpc_grpc_status_code!="0"}}[2m])) '
+        '/ clamp_min(sum(rate(rpc_server_duration_seconds_count'
         '{{service_name="{svc}"}}[2m])), 1e-9)'
     ),
 ]
@@ -53,14 +72,20 @@ REQUEST_RATE_QUERIES = [
     'sum(rate(http_requests_total{{service="{svc}"}}[2m]))',
     'sum(rate(http_requests_total{{job="{svc}"}}[2m]))',
     'sum(rate(http_server_duration_milliseconds_count{{service_name="{svc}"}}[2m]))',
+    'sum(rate(http_server_request_duration_seconds_count{{service_name="{svc}"}}[2m]))',
+    'sum(rate(rpc_server_duration_milliseconds_count{{service_name="{svc}"}}[2m]))',
+    'sum(rate(rpc_server_duration_seconds_count{{service_name="{svc}"}}[2m]))',
 ]
 
 LATENCY_P95_QUERIES = [
-    # Demo histogram (ms) → convert to seconds for uniform thresholding
+    # Mini demo histogram (ms) → seconds
     'histogram_quantile(0.95, sum(rate(demo_http_duration_ms_bucket{{service_name="{svc}"}}[2m])) by (le)) / 1000',
     'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{{service="{svc}"}}[2m])) by (le))',
     'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{{job="{svc}"}}[2m])) by (le))',
     'histogram_quantile(0.95, sum(rate(http_server_duration_milliseconds_bucket{{service_name="{svc}"}}[2m])) by (le)) / 1000',
+    'histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{{service_name="{svc}"}}[2m])) by (le))',
+    'histogram_quantile(0.95, sum(rate(rpc_server_duration_milliseconds_bucket{{service_name="{svc}"}}[2m])) by (le)) / 1000',
+    'histogram_quantile(0.95, sum(rate(rpc_server_duration_seconds_bucket{{service_name="{svc}"}}[2m])) by (le))',
 ]
 
 # p99 — preferred narrative for explainability ("p99 latency cao hơn X sigma…")
@@ -69,6 +94,7 @@ LATENCY_P99_QUERIES = [
     'histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{{service="{svc}"}}[2m])) by (le))',
     'histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{{job="{svc}"}}[2m])) by (le))',
     'histogram_quantile(0.99, sum(rate(http_server_duration_milliseconds_bucket{{service_name="{svc}"}}[2m])) by (le)) / 1000',
+    'histogram_quantile(0.99, sum(rate(rpc_server_duration_milliseconds_bucket{{service_name="{svc}"}}[2m])) by (le)) / 1000',
 ]
 
 

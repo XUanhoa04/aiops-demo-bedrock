@@ -230,13 +230,16 @@ def incident_topology(incident_id: str) -> dict:
     Returns static catalog upstream/downstream + mermaid snippet so operators
     see dependency context without opening YAML.
     """
+    import os
+
     from aiops_shared.topology import load_topology_catalog
 
     inc = repo.get(incident_id)
     if not inc:
         raise HTTPException(status_code=404, detail="incident not found")
 
-    catalog = load_topology_catalog()
+    # Astronomy mode sets TOPOLOGY_PATH to service_topology_astronomy.yaml
+    catalog = load_topology_catalog(os.getenv("TOPOLOGY_PATH") or None)
     nb = catalog.neighborhood(inc.service_name)
     body = nb.to_dict()
 

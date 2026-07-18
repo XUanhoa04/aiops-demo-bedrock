@@ -52,7 +52,10 @@ RCA Redis poll defaults **off** so `aiops:incidents` is not a second auto-RCA pa
 
 ## Topology (RCA)
 
-Static catalog: `config/service_topology.yaml` (checkout → payment + shared redis/DB).
+**Default (mini apps):** `config/service_topology.yaml` (checkout → payment + shared redis/DB).
+
+**Optional (Astronomy Shop):** `config/service_topology_astronomy.yaml` + OpenTelemetry Demo
+microservices exporting OTLP into LGTM — see [`OTEL_DEMO.md`](OTEL_DEMO.md).
 
 At gather time RCA also merges **runtime edges** from Tempo (`root_service` / patterns)
 and pulls RED + error logs for **upstream/downstream** neighbors into `EvidencePack`.
@@ -80,7 +83,7 @@ logs), prefer that dependency as `root_cause` — avoid wrong-hop blame on the t
 | Detector state | In-process deques | Feature store / stream processor; survive restarts |
 | Auth | Open APIs on localhost | mTLS, SSO, RBAC on approve/execute |
 | Multi-tenant | Single compose network | Namespace isolation, per-tenant quotas |
-| Topology | Static YAML + Tempo-inferred edges (demo graph) | Mesh/CMDB service graph + continuous discovery |
+| Topology | Mini: 2-app YAML; optional **Astronomy Shop** multi-service graph | Mesh/CMDB service graph + continuous discovery |
 | Eval dataset | ~30 RCA + ~20 anomaly (core/holdout) | Larger labeled set + shadow traffic + human agreement |
 | Auto-remediation | Propose / low-risk chaos reset only | Change windows, canary, automated rollback |
 
