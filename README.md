@@ -29,13 +29,14 @@ Offline quality gates (no Docker required for unit/eval): `bash scripts/run-eval
 
 | Senior bar | Implementation |
 |------------|----------------|
-| **Safety** | High-risk restart/scale require approval; Bedrock failures fall back to rules |
+| **Safety** | High-risk restart/scale need approval; optional `REMEDIATION_API_KEY`; Bedrock → rule fallback |
 | **Explainability** | Detector emits sigma/EWMA sentences, not only opaque scores |
 | **Grounded GenAI** | RCA only reasons over Prom/Loki/Tempo evidence + strict JSON schema |
-| **Time-to-evidence** | Incident UI **🔍 Xem Trace** deep-links Grafana Tempo Explore |
+| **Single control plane** | Decision Engine owns RCA/remediate/escalate (IM does not always call LLM) |
+| **Time-to-evidence** | Incident UI **🔍 View Trace** + topology panel deep-links Grafana Tempo |
 | **Closed loop** | Feedback metrics (`feedback_positive_rate`, `rca_accuracy_estimate`, `false_positive_count`) |
 | **Operate-ability** | One compose file, healthchecks, non-root images, log rotation |
-| **Measurable quality** | Offline anomaly F1 + RCA accuracy + **baseline beat** in CI |
+| **Measurable quality** | Offline anomaly F1 + RCA accuracy (stricter scoring) + **baseline beat** in CI |
 
 ### Production trade-offs (not oversold)
 
@@ -46,7 +47,7 @@ This is a **laptop-friendly demo**, not a multi-tenant SaaS. Deliberately simpli
 | Redis LIST queues | Kafka / SQS / Streams + DLQ |
 | SQLite tickets | Postgres + migrations |
 | In-memory detector windows | Feature store / stream processor |
-| Open localhost APIs | SSO + RBAC on approve/execute |
+| Optional API key on remediate | SSO + RBAC on approve/execute |
 
 Full diagram & decision rationale: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
 
@@ -63,30 +64,50 @@ Full diagram ([diagrams.mingrammer.com](https://diagrams.mingrammer.com/)) — s
 python docs/generate_architecture_diagram.py
 ```
 
+### Control plane (Mermaid)
+
+```mermaid
+flowchart TD
+  Apps[checkout / payment OTel] --> LGTM[LGTM Prom Loki Tempo]
+  LGTM --> Det[anomaly-detector hybrid + confidence]
+  Det -->|Redis anomalies| IM[incident-manager tickets + UI]
+  IM -->|policy only| DE[decision-engine]
+  DE -->|conf low| Esc[escalate on-call]
+  DE -->|conf high + pattern| Rem[remediation propose gated]
+  DE -->|medium / unknown pattern| RCA[rca-engine topology-aware]
+  RCA --> Rem
+  Rem --> FB[feedback / engine-qa]
+  IM -->|View Trace + topology| Graf[Grafana Tempo Explore]
+```
+
+**Invariant:** RCA/LLM is invoked by **Decision Engine**, not on every ticket.
+Set `ENABLE_DIRECT_RCA_FANOUT=true` only for legacy dual-path demos.
+
 ### Pipeline stages
 
 1. **Observability** — Apps export OTLP to LGTM (metrics + traces; logs when available).
 2. **Anomaly detection** — Hybrid EWMA/z-score/STL + IsolationForest; multi-signal confidence 0–100.
 3. **Correlation & incident** — Same service+metric window → one ticket (noise control).
 4. **Decision Engine** — conf≥85 + known pattern → gated remediate; 60–85 → RCA/LLM; &lt;60 → escalate.
-5. **RCA** — Evidence pack only; Bedrock `converse()` + JSON schema; rule fallback.
-6. **Remediation** — Low-risk auto (e.g. clear chaos); high-risk (restart/scale) needs approval.
+5. **RCA** — Evidence pack + topology neighbors; Bedrock `converse()` + JSON schema; rule fallback.
+6. **Remediation** — Low-risk auto (e.g. clear chaos); high-risk (restart/scale) needs approval (+ optional API key).
 7. **Feedback / Engine QA** — Thumbs + precision/FP/hallucination gauges + tuning advice.
 
 ---
 
 ## Trace experience (standout feature)
 
-From **http://localhost:8002/** open an incident → **🔍 Xem Trace**:
+From **http://localhost:8002/** open an incident → **🔍 View Trace**:
 
 - If RCA found Tempo traces → opens Grafana Explore on the **primary slow/error trace id**.
 - Else → service-scoped TraceQL (`status=error`) so the operator still lands in context.
-- Also: **Logs** deep-link (Loki) + raw JSON for automation.
+- Also: **Logs** deep-link (Loki) + **Service topology** panel (`GET /incidents/{id}/topology`).
 
 API for bots/Slack:
 
 ```bash
 curl -s http://localhost:8002/incidents/<id>/observability-links | jq .
+curl -s http://localhost:8002/incidents/<id>/topology | jq .
 ```
 
 **Why deep-link?** On-call time is the scarce resource. Copy-pasting trace IDs is swivel-chair toil and error-prone.
@@ -235,8 +256,11 @@ python evaluation/evaluate_rca.py --mode online
 | Suite | Metric | Notes |
 |-------|--------|--------|
 | **Anomaly** (8) | F1 gate ≥ 0.75 in CI | Hybrid detector on labeled series |
-| **RCA** (15 incl. topology wrong-hop) | Accuracy gate ≥ 0.70 in CI | rule_based + topology + keyword/Jaccard |
+| **RCA** (~17 incl. topology + paraphrased hold-out) | Accuracy gate ≥ 0.70 in CI | Stricter class/service match — **not** a 100% quality claim |
 | **Baselines** | System must **beat** random / always-error / empty | Prevents “dataset overfit” theater |
+
+Scoring requires fault-class agreement (pool/cache/gateway/…) and wrong-hop service guards.
+Re-run after every rules/topology change; treat numbers as a **regression gate**.
 
 ```bash
 bash scripts/run-evaluation.sh
@@ -275,8 +299,8 @@ Full talk track: **[docs/DEMO_STORY.md](docs/DEMO_STORY.md)** · Video shot list
 | 0:00 | Architecture Mermaid + pitch |
 | 0:30 | `python scripts/demo_story.py` |
 | 1:30 | Incident Console — explanation column |
-| 2:00 | Click **🔍 Xem Trace** → Grafana Tempo |
-| 2:40 | Remediation UI risk gates |
+| 2:00 | Click **🔍 View Trace** → Grafana Tempo + topology panel |
+| 2:40 | Remediation UI risk gates (+ optional API key) |
 | 3:10 | Feedback thumbs + `/metrics` quality |
 | 3:40 | Production upgrades (Kafka, Postgres, outbox) |
 
@@ -290,15 +314,20 @@ aiops-demo-bedrock/
 ├── .env.example
 ├── apps/                      # OTel-emitting demo services (+ chaos)
 ├── aiops-services/
-│   ├── anomaly-detector/      # hybrid + explainable notifier
-│   ├── incident-manager/      # tickets + trace-first console
-│   ├── rca-engine/            # grounded Bedrock RCA + trace attach
-│   ├── remediation/           # gated actions + Streamlit
-│   └── feedback-collector/    # review loop + quality metrics
-├── shared/aiops_shared/       # models, OTEL, Redis, grafana_links
-├── observability/             # dashboards + scrape snippets
-├── docs/DEMO_STORY.md
-└── scripts/                   # demo_story, e2e, generate-incident, …
+│   ├── anomaly-detector/      # hybrid + confidence
+│   ├── incident-manager/      # tickets + trace/topology console
+│   ├── decision-engine/       # single control plane (auto/RCA/escalate)
+│   ├── rca-engine/            # topology-aware Bedrock RCA + rules
+│   ├── remediation/           # gated actions + optional API key
+│   ├── feedback-collector/    # review loop
+│   ├── engine-qa/             # meta precision / hallucination
+│   └── aiops-console/         # unified Streamlit
+├── config/service_topology.yaml
+├── evaluation/                # offline RCA + anomaly + baselines
+├── shared/aiops_shared/       # models, topology, OTEL, grafana_links
+├── observability/
+├── docs/
+└── scripts/
 ```
 
 ---

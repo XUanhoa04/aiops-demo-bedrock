@@ -39,6 +39,7 @@ jobs:
           pip install -r aiops-services/decision-engine/requirements.txt
           pip install -r aiops-services/engine-qa/requirements.txt
           pip install -r aiops-services/incident-manager/requirements.txt
+          pip install -r aiops-services/remediation/requirements.txt
           pip install pyyaml pytest
 
       - name: Validate docker-compose
@@ -58,6 +59,8 @@ jobs:
           pytest -q aiops-services/incident-manager/tests
           export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/rca-engine"
           pytest -q aiops-services/rca-engine/tests
+          export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/remediation"
+          pytest -q aiops-services/remediation/tests
 
       - name: Offline anomaly evaluation (gate F1 ≥ 0.75)
         env:

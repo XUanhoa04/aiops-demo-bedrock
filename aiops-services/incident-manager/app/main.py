@@ -221,6 +221,64 @@ def incident_observability_links(incident_id: str) -> dict:
     return links
 
 
+@app.get("/incidents/{incident_id}/topology")
+def incident_topology(incident_id: str) -> dict:
+    """
+    Service neighborhood for the ticket owner — used by Incident Console
+    topology panel and RCA explainability.
+
+    Returns static catalog upstream/downstream + mermaid snippet so operators
+    see dependency context without opening YAML.
+    """
+    from aiops_shared.topology import load_topology_catalog
+
+    inc = repo.get(incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail="incident not found")
+
+    catalog = load_topology_catalog()
+    nb = catalog.neighborhood(inc.service_name)
+    body = nb.to_dict()
+
+    # Prefer root service mentioned in RCA when it differs from ticket owner
+    root_hint = None
+    if inc.root_cause:
+        rc = inc.root_cause.lower()
+        for name in list(nb.upstream) + list(nb.downstream) + [nb.service]:
+            if name and name.lower().replace("-service", "") in rc:
+                root_hint = name
+                break
+        if "payment" in rc and not root_hint:
+            root_hint = "payment-service" if "payment" in rc else None
+        if "gateway" in rc:
+            root_hint = root_hint or "payment-gateway"
+
+    lines = ["graph LR"]
+    svc = nb.service or inc.service_name
+    safe = lambda s: (s or "unknown").replace("-", "_")
+    lines.append(f'  {safe(svc)}["{svc}"]')
+    for u in nb.upstream:
+        mark = ":::root" if root_hint and u == root_hint else ""
+        lines.append(f'  {safe(svc)} -->|depends_on| {safe(u)}["{u}"]{mark}')
+    for d in nb.downstream:
+        lines.append(f'  {safe(d)}["{d}"] -->|calls| {safe(svc)}')
+    for sh in nb.shared_deps[:6]:
+        lines.append(f'  {safe(svc)} -.-> {safe(sh)}["{sh}"]')
+    if root_hint and root_hint != svc:
+        lines.append(f'  classDef root fill:#5b2,stroke:#3a1,color:#fff')
+
+    body["incident_id"] = inc.id
+    body["ticket_service"] = inc.service_name
+    body["root_cause_hint"] = root_hint
+    body["root_cause"] = inc.root_cause
+    body["mermaid"] = "\n".join(lines)
+    body["summary"] = (
+        f"{svc} upstream={nb.upstream or '[]'} downstream={nb.downstream or '[]'} "
+        f"shared={nb.shared_deps or '[]'}"
+    )
+    return body
+
+
 @app.post("/incidents", response_model=Incident, status_code=201)
 def create_incident(body: IncidentCreate) -> Incident:
     """Manual ticket creation (UI / ops / tests)."""

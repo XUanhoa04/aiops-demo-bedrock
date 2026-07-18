@@ -23,11 +23,13 @@ version: "1.0"
 description: "AIOps demo topology — checkout depends on payment"
 
 # Canonical service graph (caller → callee)
+# Expanded beyond a 2-node toy so multi-hop / shared-infra RCA is interviewable.
 services:
   checkout-service:
     display_name: Checkout
     depends_on:
       - payment-service
+      - inventory-service
     shared_deps:
       - redis-cache
       - postgres-orders
@@ -37,7 +39,8 @@ services:
 
   payment-service:
     display_name: Payment
-    depends_on: []
+    depends_on:
+      - fraud-service
     shared_deps:
       - redis-cache
       - postgres-payments
@@ -45,6 +48,23 @@ services:
     aliases:
       - payment
       - aiops-payment
+
+  inventory-service:
+    display_name: Inventory
+    depends_on: []
+    shared_deps:
+      - postgres-inventory
+      - redis-cache
+    aliases:
+      - inventory
+
+  fraud-service:
+    display_name: Fraud
+    depends_on: []
+    shared_deps:
+      - redis-cache
+    aliases:
+      - fraud
 
 # Shared infrastructure (not microservices, but RCA targets)
 shared_infrastructure:
@@ -57,6 +77,9 @@ shared_infrastructure:
   postgres-payments:
     kind: database
     notes: "Payment ledger DB — pool exhaustion cascades into checkout 502"
+  postgres-inventory:
+    kind: database
+    notes: "SKU stock DB — stock lock latency can stall checkout"
   payment-gateway:
     kind: external
     notes: "Third-party PSP — timeouts surface as payment + checkout errors"

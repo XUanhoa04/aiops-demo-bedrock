@@ -142,6 +142,78 @@ class TestHandleAnomaly(unittest.TestCase):
             # metrics recorded
             self.assertGreaterEqual(OPEN_INCIDENTS._value.get(), 1)
 
+    def test_single_control_plane_no_direct_rca_when_decision_ok(self) -> None:
+        """Decision Engine is primary; direct RCA stays off by default."""
+        from app.consumer import AnomalyConsumer
+        from app import config as cfg
+
+        mock_redis = MagicMock()
+        mock_redis.ping.return_value = True
+        mock_redis.lpush.return_value = 1
+
+        mock_decision = MagicMock()
+        mock_decision.enabled = True
+        mock_decision.push.return_value = {"ok": True}
+
+        mock_rca = MagicMock()
+        mock_rca.enabled = True
+
+        prev = cfg.settings.enable_direct_rca_fanout
+        cfg.settings.enable_direct_rca_fanout = False
+        try:
+            with patch("app.consumer.get_redis", return_value=mock_redis):
+                consumer = AnomalyConsumer(
+                    self.repo, rca=mock_rca, decision=mock_decision
+                )
+                consumer.redis = mock_redis
+                a1 = AnomalyEvent(
+                    service_name="checkout-service",
+                    metric_name="http_error_rate",
+                    metric_value=0.4,
+                    threshold=0.15,
+                    severity=AnomalySeverity.HIGH,
+                    message="control plane test",
+                )
+                consumer.handle_anomaly(a1, source="webhook")
+                mock_decision.push.assert_called_once()
+                mock_rca.push_incident.assert_not_called()
+        finally:
+            cfg.settings.enable_direct_rca_fanout = prev
+
+    def test_direct_rca_when_flag_enabled(self) -> None:
+        from app.consumer import AnomalyConsumer
+        from app import config as cfg
+
+        mock_redis = MagicMock()
+        mock_redis.ping.return_value = True
+        mock_redis.lpush.return_value = 1
+        mock_decision = MagicMock()
+        mock_decision.enabled = True
+        mock_decision.push.return_value = {"ok": True}
+        mock_rca = MagicMock()
+        mock_rca.enabled = True
+
+        prev = cfg.settings.enable_direct_rca_fanout
+        cfg.settings.enable_direct_rca_fanout = True
+        try:
+            with patch("app.consumer.get_redis", return_value=mock_redis):
+                consumer = AnomalyConsumer(
+                    self.repo, rca=mock_rca, decision=mock_decision
+                )
+                consumer.redis = mock_redis
+                a1 = AnomalyEvent(
+                    service_name="payment-service",
+                    metric_name="http_error_rate",
+                    metric_value=0.5,
+                    threshold=0.15,
+                    severity=AnomalySeverity.HIGH,
+                    message="legacy fanout",
+                )
+                consumer.handle_anomaly(a1, source="webhook")
+                mock_rca.push_incident.assert_called_once()
+        finally:
+            cfg.settings.enable_direct_rca_fanout = prev
+
 
 class TestAPIWithTestClient(unittest.TestCase):
     """FastAPI TestClient — exercises REST without real Redis (fan-out mocked)."""

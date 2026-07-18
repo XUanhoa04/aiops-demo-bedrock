@@ -26,18 +26,27 @@ class Settings(BaseSettings):
     # Correlation window: same service + metric within N minutes → one incident
     correlation_window_minutes: int = 10
 
-    # RCA Engine hand-off (async webhook; empty = disabled)
+    # RCA Engine URL (manual analyze + legacy fan-out). Empty = disabled.
     # Env: RCA_ENGINE_URL  e.g. http://aiops-rca-engine:8003
     rca_engine_url: str = "http://aiops-rca-engine:8003"
     rca_timeout_sec: float = 8.0
 
-    # Decision Engine — policy routing after ticket create (best-effort)
+    # Single control plane (production-like cost control)
+    # ----------------------------------------------------
+    # Default: Decision Engine owns RCA / remediate / escalate routing.
+    # Direct IM → RCA HTTP fan-out is OFF so medium-band-only LLM policy is real.
+    # Set ENABLE_DIRECT_RCA_FANOUT=true only for legacy demos that skip DE.
+    # Env: ENABLE_DIRECT_RCA_FANOUT / RCA_ALWAYS_ON
+    enable_direct_rca_fanout: bool = False
+
+    # Decision Engine — policy routing after ticket create (primary control plane)
     # Env: DECISION_ENGINE_URL  empty = disabled
     decision_engine_url: str = "http://aiops-decision-engine:8006"
     decision_timeout_sec: float = 15.0
     enable_decision_engine: bool = True
 
-    # Also enqueue incident JSON on Redis for async consumers (RCA, etc.)
+    # Enqueue incident JSON on Redis (optional async consumers).
+    # RCA redis poll should stay OFF by default so this is not a dual path.
     enable_redis_incident_fanout: bool = True
 
     # Browser-facing Grafana (for one-click Trace / Logs deep-links in the UI).

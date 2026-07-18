@@ -49,39 +49,93 @@ def keyword_hit_rate(predicted: str, keywords: Iterable[str]) -> float:
     return hits / len(keys)
 
 
+def extract_service_mentions(text: str) -> set[str]:
+    """Canonical service tokens found in free text (for wrong-hop checks)."""
+    blob = (text or "").lower()
+    found: set[str] = set()
+    mapping = {
+        "payment-service": ("payment-service", "payment service"),
+        "checkout-service": ("checkout-service", "checkout service"),
+        "payment-gateway": ("payment gateway", "payment-gateway", "gateway timeout"),
+        "inventory-service": ("inventory-service", "inventory service"),
+    }
+    for canon, aliases in mapping.items():
+        if any(a in blob for a in aliases):
+            found.add(canon)
+    # bare names without -service suffix
+    if "payment" in blob and "payment-service" not in found and "gateway" not in blob:
+        found.add("payment-service")
+    if "checkout" in blob and "checkout-service" not in found:
+        found.add("checkout-service")
+    return found
+
+
+def primary_fault_class(text: str) -> Optional[str]:
+    """Coarse fault class for matching (pool / cache / gateway / cpu / spike / other)."""
+    t = (text or "").lower()
+    if any(x in t for x in ("connection pool", "pool exhaust", "pool exhausted", "db_pool")):
+        return "pool"
+    if any(x in t for x in ("cache miss", "cold redis", "redis keyspace")):
+        return "cache"
+    if any(x in t for x in ("gateway timeout", "payment gateway", "dependency timeout")):
+        return "gateway"
+    if any(x in t for x in ("cpu", "thread pool", "throttl", "worker")):
+        return "cpu"
+    if any(
+        x in t
+        for x in (
+            "without application fault",
+            "normal traffic",
+            "traffic spike",
+            "insufficient evidence",
+        )
+    ):
+        return "nofault"
+    if "error rate" in t or "elevated" in t:
+        return "error_rate"
+    return None
+
+
 def is_rca_correct(
     predicted: str,
     ground_truth: str,
     keywords: Optional[list[str]] = None,
     *,
-    jaccard_threshold: float = 0.35,
-    keyword_threshold: float = 0.5,
+    jaccard_threshold: float = 0.40,
+    keyword_threshold: float = 0.6,
 ) -> bool:
     """
-    A prediction is "correct" if:
-      - Jaccard(pred, GT) ≥ threshold, OR
-      - ≥ keyword_threshold of curated keywords appear in pred
+    Stricter correctness (anti-overfit):
+
+    1. No-fault GT → must look like insufficient/normal (not invent pool/gateway).
+    2. Fault GT → must match *fault class* (pool/cache/gateway/…) AND not
+       primarily blame the wrong service when GT names a specific service.
+    3. Soft OR: Jaccard ≥ threshold, or high keyword hit *with* class match,
+       or GT substring in prediction (not the reverse alone — stops kitchen-sink
+       preds matching via tiny GT fragments).
+
+    Keywords alone are **not** enough if the fault class disagrees.
     """
     pred = predicted or ""
     gt = ground_truth or ""
-    if jaccard(pred, gt) >= jaccard_threshold:
-        return True
-    if keywords and keyword_hit_rate(pred, keywords) >= keyword_threshold:
-        return True
-    # Substring either way (handles "X; Y" multi-cause rule output).
-    # NOTE: empty pred must NOT match — in Python `"" in "foo"` is True.
     pred_s = pred.strip()
     gt_s = gt.strip()
-    if pred_s and gt_s and (gt_s.lower() in pred_s.lower() or pred_s.lower() in gt_s.lower()):
-        return True
-    # "No real fault" scenarios: accept insufficient-evidence style outputs
-    no_fault = any(
-        x in gt.lower()
+    if not pred_s:
+        return False
+
+    gt_class = primary_fault_class(gt_s)
+    pred_class = primary_fault_class(pred_s)
+    no_fault = gt_class == "nofault" or any(
+        x in gt_s.lower()
         for x in ("without application fault", "normal traffic", "insufficient")
     )
-    if no_fault and pred_s:
+
+    if no_fault:
         pl = pred_s.lower()
-        if any(
+        # Reject inventing a concrete infra fault on normal scenarios
+        if pred_class in {"pool", "cache", "gateway", "cpu"}:
+            return False
+        return any(
             x in pl
             for x in (
                 "insufficient evidence",
@@ -89,9 +143,45 @@ def is_rca_correct(
                 "no error",
                 "normal",
                 "traffic spike",
+                "without application fault",
             )
-        ):
-            return True
+        )
+
+    # Fault scenarios: class must agree when both sides have a class
+    if gt_class and pred_class and gt_class != pred_class and gt_class != "error_rate":
+        # allow error_rate GT to match gateway/pool when keywords strong + service ok
+        if not (gt_class == "error_rate" and pred_class in {"gateway", "pool", "error_rate"}):
+            if jaccard(pred_s, gt_s) < 0.55:
+                return False
+
+    # Wrong-hop guard: if GT clearly names payment vs checkout, pred must mention it
+    gt_services = extract_service_mentions(gt_s)
+    pred_services = extract_service_mentions(pred_s)
+    if "payment-service" in gt_services and "checkout-service" not in gt_services:
+        # Prefer payment root — fail if only checkout is blamed
+        if "payment-service" not in pred_services and "payment-gateway" not in pred_services:
+            if "payment" not in pred_s.lower():
+                return False
+    if "checkout-service" in gt_services and "payment-service" not in gt_services:
+        if "checkout-service" not in pred_services and "checkout" not in pred_s.lower():
+            return False
+
+    if jaccard(pred_s, gt_s) >= jaccard_threshold:
+        return True
+
+    # GT fully contained in prediction (multi-cause rule output)
+    if gt_s.lower() in pred_s.lower():
+        return True
+
+    if keywords and keyword_hit_rate(pred_s, keywords) >= keyword_threshold:
+        # Require class alignment when class is known
+        if gt_class and pred_class and gt_class != pred_class and gt_class not in {
+            "error_rate",
+            "nofault",
+        }:
+            return False
+        return True
+
     return False
 
 

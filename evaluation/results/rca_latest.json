@@ -1,16 +1,16 @@
 {
-  "generated_at": "2026-07-18T13:07:37.914826+00:00",
+  "generated_at": "2026-07-18T14:43:30.312166+00:00",
   "mode": "offline",
   "dataset": "D:\\project\\aiops-demo-bedrock\\evaluation\\rca_scenarios.yaml",
   "aggregate": {
-    "n": 15,
-    "correct": 15,
-    "accuracy": 1.0,
+    "n": 17,
+    "correct": 16,
+    "accuracy": 0.9412,
     "precision": 1.0,
-    "recall": 1.0,
-    "f1": 1.0,
-    "mean_jaccard": 0.5951,
-    "mean_keyword_rate": 0.7556,
+    "recall": 0.9375,
+    "f1": 0.9677,
+    "mean_jaccard": 0.5998,
+    "mean_keyword_rate": 0.7696,
     "mean_iterations": 1.0
   },
   "rows": [
@@ -114,7 +114,7 @@
       "scenario_id": "rca-09-payment-high-error-generic",
       "ground_truth": "elevated error rate on payment-service / payment gateway timeout",
       "predicted": "payment gateway timeout / dependency failure; slow traces observed (~900ms)",
-      "correct": true,
+      "correct": false,
       "jaccard": 0.2143,
       "keyword_rate": 0.5,
       "confidence": 67.0,
@@ -193,7 +193,31 @@
       "mode": "rule_based",
       "iterations": 1,
       "notes": ""
+    },
+    {
+      "scenario_id": "rca-16-paraphrase-pool",
+      "ground_truth": "payment-service database connection pool exhaustion",
+      "predicted": "payment-service database connection pool exhaustion; slow traces observed (~1900ms)",
+      "correct": true,
+      "jaccard": 0.5556,
+      "keyword_rate": 0.75,
+      "confidence": 75.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-17-paraphrase-cache",
+      "ground_truth": "checkout-service high latency due to cache miss / cold redis keyspace",
+      "predicted": "checkout-service high latency due to cache miss / cold redis keyspace; slow traces observed (~1650ms)",
+      "correct": true,
+      "jaccard": 0.7143,
+      "keyword_rate": 1.0,
+      "confidence": 65.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
     }
   ],
-  "table": "scenario_id                        | ok | jac  | kw   | iter | mode       | predicted                               \n-----------------------------------+----+------+------+------+------------+-----------------------------------------\nrca-01-payment-db-pool             | Y  | 0.50 | 1.00 | 1    | rule_based | payment-service database connection pool\nrca-02-checkout-db-pool            | Y  | 0.56 | 0.75 | 1    | rule_based | checkout-service database connection poo\nrca-03-payment-gateway-timeout     | Y  | 0.56 | 1.00 | 1    | rule_based | payment gateway timeout / dependency fai\nrca-04-checkout-cache-miss         | Y  | 0.71 | 1.00 | 1    | rule_based | checkout-service high latency due to cac\nrca-05-payment-redis-cache         | Y  | 0.71 | 1.00 | 1    | rule_based | payment-service high latency due to cach\nrca-06-checkout-cpu-throttle       | Y  | 0.67 | 1.00 | 1    | rule_based | checkout-service worker/thread pool satu\nrca-07-cascade-payment-to-checkout | Y  | 0.50 | 0.67 | 1    | rule_based | payment-service database connection pool\nrca-08-traffic-spike-only          | Y  | 0.12 | 0.25 | 1    | rule_based | Insufficient evidence: cannot pin root c\nrca-09-payment-high-error-generic  | Y  | 0.21 | 0.50 | 1    | rule_based | payment gateway timeout / dependency fai\nrca-10-checkout-dependency-timeout | Y  | 0.56 | 0.33 | 1    | rule_based | payment gateway timeout / dependency fai\nrca-11-partial-evidence-pool       | Y  | 1.00 | 0.67 | 1    | rule_based | payment-service database connection pool\nrca-12-noisy-logs-latency          | Y  | 0.71 | 1.00 | 1    | rule_based | checkout-service high latency due to cac\nrca-13-wrong-hop-checkout-symptom  | Y  | 0.56 | 0.75 | 1    | rule_based | payment-service database connection pool\nrca-14-wrong-hop-gateway           | Y  | 0.56 | 0.75 | 1    | rule_based | payment gateway timeout / dependency fai\nrca-15-local-root-not-upstream     | Y  | 1.00 | 0.67 | 1    | rule_based | checkout-service database connection poo"
+  "table": "scenario_id                        | ok | jac  | kw   | iter | mode       | predicted                               \n-----------------------------------+----+------+------+------+------------+-----------------------------------------\nrca-01-payment-db-pool             | Y  | 0.50 | 1.00 | 1    | rule_based | payment-service database connection pool\nrca-02-checkout-db-pool            | Y  | 0.56 | 0.75 | 1    | rule_based | checkout-service database connection poo\nrca-03-payment-gateway-timeout     | Y  | 0.56 | 1.00 | 1    | rule_based | payment gateway timeout / dependency fai\nrca-04-checkout-cache-miss         | Y  | 0.71 | 1.00 | 1    | rule_based | checkout-service high latency due to cac\nrca-05-payment-redis-cache         | Y  | 0.71 | 1.00 | 1    | rule_based | payment-service high latency due to cach\nrca-06-checkout-cpu-throttle       | Y  | 0.67 | 1.00 | 1    | rule_based | checkout-service worker/thread pool satu\nrca-07-cascade-payment-to-checkout | Y  | 0.50 | 0.67 | 1    | rule_based | payment-service database connection pool\nrca-08-traffic-spike-only          | Y  | 0.12 | 0.25 | 1    | rule_based | Insufficient evidence: cannot pin root c\nrca-09-payment-high-error-generic  | N  | 0.21 | 0.50 | 1    | rule_based | payment gateway timeout / dependency fai\nrca-10-checkout-dependency-timeout | Y  | 0.56 | 0.33 | 1    | rule_based | payment gateway timeout / dependency fai\nrca-11-partial-evidence-pool       | Y  | 1.00 | 0.67 | 1    | rule_based | payment-service database connection pool\nrca-12-noisy-logs-latency          | Y  | 0.71 | 1.00 | 1    | rule_based | checkout-service high latency due to cac\nrca-13-wrong-hop-checkout-symptom  | Y  | 0.56 | 0.75 | 1    | rule_based | payment-service database connection pool\nrca-14-wrong-hop-gateway           | Y  | 0.56 | 0.75 | 1    | rule_based | payment gateway timeout / dependency fai\nrca-15-local-root-not-upstream     | Y  | 1.00 | 0.67 | 1    | rule_based | checkout-service database connection poo\nrca-16-paraphrase-pool             | Y  | 0.56 | 0.75 | 1    | rule_based | payment-service database connection pool\nrca-17-paraphrase-cache            | Y  | 0.71 | 1.00 | 1    | rule_based | checkout-service high latency due to cac"
 }

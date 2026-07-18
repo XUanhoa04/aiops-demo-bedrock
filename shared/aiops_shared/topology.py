@@ -200,7 +200,7 @@ def load_topology_catalog(path: Optional[str] = None) -> TopologyCatalog:
 
 def _builtin_catalog() -> dict[str, Any]:
     return {
-        "version": "builtin-1.0",
+        "version": "builtin-1.1",
         "rca_hints": {
             "prefer_dependency_root_when_correlated": True,
             "error_rate_neighbor_margin": 0.05,
@@ -208,20 +208,35 @@ def _builtin_catalog() -> dict[str, Any]:
         },
         "services": {
             "checkout-service": {
-                "depends_on": ["payment-service"],
+                "depends_on": ["payment-service", "inventory-service"],
                 "shared_deps": ["redis-cache", "postgres-orders"],
                 "aliases": ["checkout"],
             },
             "payment-service": {
-                "depends_on": [],
-                "shared_deps": ["redis-cache", "postgres-payments", "payment-gateway"],
+                "depends_on": ["fraud-service"],
+                "shared_deps": [
+                    "redis-cache",
+                    "postgres-payments",
+                    "payment-gateway",
+                ],
                 "aliases": ["payment"],
+            },
+            "inventory-service": {
+                "depends_on": [],
+                "shared_deps": ["postgres-inventory", "redis-cache"],
+                "aliases": ["inventory"],
+            },
+            "fraud-service": {
+                "depends_on": [],
+                "shared_deps": ["redis-cache"],
+                "aliases": ["fraud"],
             },
         },
         "shared_infrastructure": {
             "redis-cache": {"kind": "cache"},
             "postgres-orders": {"kind": "database"},
             "postgres-payments": {"kind": "database"},
+            "postgres-inventory": {"kind": "database"},
             "payment-gateway": {"kind": "external"},
         },
     }

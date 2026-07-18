@@ -39,5 +39,11 @@ class Settings(BaseSettings):
     # Default actor identity recorded in history
     default_executor: str = "remediation-bot"
 
+    # Operator auth for high-impact mutations (approve / execute / reject / FP).
+    # Empty = open localhost demo (logged on /health as auth_required=false).
+    # Set REMEDIATION_API_KEY in .env for a production-like gate; Streamlit and
+    # curl must send header X-API-Key: <value>.
+    remediation_api_key: str = ""
+
 
 settings = Settings()

@@ -175,8 +175,9 @@ UI_HTML = """<!DOCTYPE html>
   <div class="story">
     <strong>Demo story:</strong>
     Checkout order latency/errors spike → hybrid detector explains the sigma/EWMA breach →
-    ticket opens with correlation → RCA grounds on Prom/Loki/Tempo →
-    <strong>🔍 Xem Trace</strong> jumps into Grafana Tempo → remediation proposes scale/reset with risk gates → on-call feedback closes the loop.
+    ticket opens with correlation → Decision Engine routes RCA only when needed →
+    RCA grounds on Prom/Loki/Tempo + topology →
+    <strong>🔍 View Trace</strong> jumps into Grafana Tempo → remediation proposes scale/reset with risk gates → on-call feedback closes the loop.
   </div>
 
   <main>
@@ -207,6 +208,12 @@ UI_HTML = """<!DOCTYPE html>
         <h3>Root cause analysis</h3>
         <p id="rcaText" class="muted">RCA pending…</p>
         <div id="rcaActions" class="muted" style="margin-top:8px"></div>
+      </div>
+      <div class="card" id="cardTopo">
+        <h3>Service topology</h3>
+        <p id="topoSummary" class="muted">Loading neighborhood…</p>
+        <pre id="topoMermaid" style="margin-top:8px;max-height:16vh"></pre>
+        <p class="muted" style="margin-top:6px" id="topoRoot"></p>
       </div>
       <div class="card">
         <h3>Evidence links</h3>
@@ -337,6 +344,11 @@ UI_HTML = """<!DOCTYPE html>
           obs = await fetchJSON("/incidents/" + encodeURIComponent(id) + "/observability-links");
         } catch (e) { obs = null; }
 
+        let topo = null;
+        try {
+          topo = await fetchJSON("/incidents/" + encodeURIComponent(id) + "/topology");
+        } catch (e) { topo = null; }
+
         const notes = parseNotes(inc);
         const expl = explanationOf(inc);
         $("dlgTitle").textContent = inc.title || id;
@@ -363,9 +375,9 @@ UI_HTML = """<!DOCTYPE html>
         const tid = (obs && obs.primary_trace_id) || notes.primary_trace_id;
 
         if (primaryUrl) {
-          actions.push(`<a class="btn trace" href="${primaryUrl}" target="_blank" rel="noopener">🔍 Xem Trace</a>`);
+          actions.push(`<a class="btn trace" href="${primaryUrl}" target="_blank" rel="noopener">🔍 View Trace</a>`);
         } else if (svcTraces) {
-          actions.push(`<a class="btn trace" href="${svcTraces}" target="_blank" rel="noopener">🔍 Xem Traces (service)</a>`);
+          actions.push(`<a class="btn trace" href="${svcTraces}" target="_blank" rel="noopener">🔍 View Traces (service)</a>`);
         }
         if (logsUrl) {
           actions.push(`<a class="btn" href="${logsUrl}" target="_blank" rel="noopener">📜 Logs</a>`);
@@ -385,6 +397,20 @@ UI_HTML = """<!DOCTYPE html>
         $("traceHint").textContent = tid
           ? `primary_trace_id=${tid} (from RCA evidence pack / Tempo search)`
           : `No specific trace id yet. Service Explore still works for ${inc.service_name}.`;
+
+        if (topo) {
+          $("topoSummary").textContent = topo.summary ||
+            `upstream=${(topo.upstream||[]).join(", ")||"—"} · downstream=${(topo.downstream||[]).join(", ")||"—"}`;
+          $("topoMermaid").textContent = topo.mermaid || "";
+          const rh = topo.root_cause_hint;
+          $("topoRoot").textContent = rh
+            ? `Topology / RCA root hint: ${rh} (ticket owner may be a cascade symptom)`
+            : "No dependency root preferred yet — re-run RCA after evidence fills.";
+        } else {
+          $("topoSummary").textContent = "Topology API unavailable.";
+          $("topoMermaid").textContent = "";
+          $("topoRoot").textContent = "";
+        }
 
         $("dlgBody").textContent = JSON.stringify(inc, null, 2);
         $("detailDlg").showModal();

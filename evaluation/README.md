@@ -8,11 +8,12 @@ Ground-truth datasets + offline harnesses for **quantitative** quality of:
 ## Why a dataset?
 
 Without fixed scenarios, every model/prompt change is “it looked good in the demo”.  
-This mini set (**15 RCA** incl. hard + **topology wrong-hop** scenarios + **8 anomaly** series)
-is a **regression suite** you can re-run after every change to rules, thresholds, topology, or
-Bedrock prompts. CI also requires the system to **beat naive baselines** (`evaluate_baselines.py`).
+This mini set (**~17 RCA** incl. hard + **topology wrong-hop** + **paraphrased hold-out** +
+**8 anomaly** series) is a **regression suite** — not a claim of production-perfect RCA.
+CI requires accuracy ≥ 0.70 **and** the system to **beat naive baselines**.
 
-Topology catalog used by RCA: `config/service_topology.yaml` (checkout → payment).
+Scoring is intentionally strict: fault-class match + wrong-hop service guards
+(keywords alone are insufficient). Topology catalog: `config/service_topology.yaml`.
 
 ## Layout
 
@@ -55,7 +56,7 @@ python scripts/run_scenario.py --scenario rca-01-payment-db-pool
 | Metric | Formula |
 |--------|---------|
 | Accuracy | `#correct / N` |
-| Correct | Jaccard(pred, GT) ≥ 0.35 **or** ≥50% keywords in pred **or** substring match |
+| Correct | Fault-class + service guards; Jaccard ≥ 0.40 **or** GT⊂pred **or** ≥60% keywords *with* class match |
 | Precision / Recall | Fault scenarios: TP=correct, FN=miss; Normal scenarios: TN=correct, FP=false alarm |
 | Semantic similarity | Mean Jaccard token overlap |
 | Mean iterations | Rule=1; Bedrock+fallback may be 2 |
@@ -69,11 +70,13 @@ python scripts/run_scenario.py --scenario rca-01-payment-db-pool
 | Recall | TP/(TP+FN) |
 | F1 | 2PR/(P+R) |
 
-## Sample results (latest offline run)
+## Sample results
 
-| Suite | Accuracy | Precision | Recall | F1 | Extra |
-|-------|----------|-----------|--------|-----|-------|
-| Anomaly (n=8) | 100% | 100% | 100% | 100% | TP=4 FP=0 TN=4 FN=0 |
-| RCA offline (n=10) | 100% | 100% | 100% | 100% | mean Jaccard 0.46, mean iterations 1.0 |
+Re-run after every change — do **not** treat a green CI as “100% prod quality”:
 
-Re-run with `bash scripts/run-evaluation.sh` — numbers are also in `evaluation/results/*_latest.json`.
+```bash
+bash scripts/run-evaluation.sh
+# → evaluation/results/{anomaly,rca,baselines}_latest.json
+```
+
+Gates: anomaly F1 ≥ 0.75, RCA accuracy ≥ 0.70, system beats baselines.

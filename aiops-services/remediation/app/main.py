@@ -7,15 +7,17 @@ Production notes
 * High-risk: restart/scale require Approve & Execute (or force override).
 * Action history is append-mostly SQLite for audit (who did what, when).
 * Streamlit UI on :8501 talks to this API on :8004.
+* When REMEDIATION_API_KEY is set, approve/execute/reject/FP require X-API-Key.
 """
 
 from __future__ import annotations
 
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from aiops_shared.logging_config import setup_logging
@@ -39,14 +41,41 @@ logger = logging.getLogger(__name__)
 svc = RemediationService()
 
 
+def require_operator_auth(
+    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+) -> None:
+    """
+    Gate high-impact mutations when REMEDIATION_API_KEY is configured.
+
+    Empty key = open localhost demo (documented on /health as auth_required=false).
+    Uses secrets.compare_digest to avoid timing leaks on the demo token.
+    """
+    expected = (settings.remediation_api_key or "").strip()
+    if not expected:
+        return
+    provided = (x_api_key or "").strip()
+    if not provided or not secrets.compare_digest(provided, expected):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid X-API-Key (set REMEDIATION_API_KEY)",
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    auth_on = bool((settings.remediation_api_key or "").strip())
     logger.info(
-        "remediation ready db=%s auto_low=%s simulate_only=%s",
+        "remediation ready db=%s auto_low=%s simulate_only=%s auth_required=%s",
         settings.remediation_db_path,
         settings.auto_execute_low_risk,
         settings.simulate_only,
+        auth_on,
     )
+    if not auth_on:
+        logger.warning(
+            "REMEDIATION_API_KEY empty — approve/execute open on localhost "
+            "(demo mode). Set a key for production-like safety."
+        )
     yield
     svc.close()
 
@@ -57,7 +86,7 @@ app = FastAPI(
         "Propose remediation from RCA suggested_actions, gate high-risk "
         "behind approval, execute/simulate restart & scale, store audit history."
     ),
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 setup_otel(settings.service_name, app=app)
@@ -74,10 +103,11 @@ app.add_middleware(
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     im_ok = svc.incidents.healthy()
+    auth_on = bool((settings.remediation_api_key or "").strip())
     return HealthResponse(
         status="ok" if im_ok else "degraded",
         service=settings.service_name,
-        version="0.2.0",
+        version="0.3.0",
         details={
             "incident_manager_ok": im_ok,
             "db_path": settings.remediation_db_path,
@@ -85,6 +115,7 @@ def health() -> HealthResponse:
             "simulate_only": settings.simulate_only,
             "actions_by_status": svc.repo.count_by_status(),
             "streamlit_port": settings.streamlit_port,
+            "auth_required": auth_on,
         },
     )
 
@@ -164,7 +195,11 @@ def get_action(action_id: str) -> ActionRecord:
 
 
 @app.post("/actions/{action_id}/approve", response_model=ActionRecord)
-def approve_action(action_id: str, body: ApproveRequest) -> ActionRecord:
+def approve_action(
+    action_id: str,
+    body: ApproveRequest,
+    _: None = Depends(require_operator_auth),
+) -> ActionRecord:
     """Approve high-risk action; optionally execute immediately (default)."""
     try:
         return svc.approve(
@@ -177,7 +212,11 @@ def approve_action(action_id: str, body: ApproveRequest) -> ActionRecord:
 
 
 @app.post("/actions/{action_id}/execute", response_model=ActionRecord)
-def execute_action(action_id: str, body: ExecuteRequest) -> ActionRecord:
+def execute_action(
+    action_id: str,
+    body: ExecuteRequest,
+    _: None = Depends(require_operator_auth),
+) -> ActionRecord:
     try:
         return svc.execute(
             action_id,
@@ -193,6 +232,7 @@ def reject_action(
     action_id: str,
     executed_by: str = "operator",
     reason: str = "rejected",
+    _: None = Depends(require_operator_auth),
 ) -> ActionRecord:
     try:
         return svc.reject(action_id, executed_by=executed_by, reason=reason)
@@ -201,7 +241,11 @@ def reject_action(
 
 
 @app.post("/incidents/{incident_id}/false-positive")
-def false_positive(incident_id: str, body: FalsePositiveRequest) -> dict[str, Any]:
+def false_positive(
+    incident_id: str,
+    body: FalsePositiveRequest,
+    _: None = Depends(require_operator_auth),
+) -> dict[str, Any]:
     """Mark incident as false_positive + audit row."""
     try:
         rec, incident = svc.mark_false_positive(
@@ -223,6 +267,7 @@ def remediate_legacy(
     action_type: str = "reset_error_rate",
     target_service: str = "checkout-service",
     executed_by: str = "legacy-api",
+    _: None = Depends(require_operator_auth),
 ) -> ActionRecord:
     """Backward-compatible one-shot remediate (low-risk chaos reset)."""
     texts = {

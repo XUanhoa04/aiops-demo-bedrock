@@ -17,12 +17,17 @@ import streamlit as st
 
 API = os.getenv("REMEDIATION_API_URL", "http://127.0.0.1:8004").rstrip("/")
 OPERATOR = os.getenv("REMEDIATION_OPERATOR", "streamlit-operator")
+# Must match REMEDIATION_API_KEY on the API when auth is enabled.
+API_KEY = os.getenv("REMEDIATION_API_KEY", "").strip()
 
 
 def api(method: str, path: str, **kwargs: Any) -> Any:
     url = f"{API}{path}"
+    headers = dict(kwargs.pop("headers", None) or {})
+    if API_KEY:
+        headers.setdefault("X-API-Key", API_KEY)
     with httpx.Client(timeout=30.0) as client:
-        r = client.request(method, url, **kwargs)
+        r = client.request(method, url, headers=headers or None, **kwargs)
         if r.status_code >= 400:
             raise RuntimeError(f"{method} {path} → {r.status_code}: {r.text[:400]}")
         if not r.content:

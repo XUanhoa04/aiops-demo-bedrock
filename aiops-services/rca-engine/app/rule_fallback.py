@@ -122,7 +122,17 @@ def rule_based_rca(pack: EvidencePack) -> RCAResult:
         log_blob = " ".join(str(row.get("line") or "") for row in all_logs[:30]).lower()
         log_svc_hint = _service_hint_from_logs(all_logs, service)
 
-        if "connection pool" in log_blob or "db_pool" in log_blob or "pool exhausted" in log_blob or "remaining connection slots" in log_blob:
+        pool_hit = (
+            "connection pool" in log_blob
+            or "db_pool" in log_blob
+            or "pool exhausted" in log_blob
+            or "remaining connection slots" in log_blob
+            or "maxpoolsize" in log_blob
+            or "could not obtain jdbc" in log_blob
+            or "could not obtain connection" in log_blob
+            or ("jdbc" in log_blob and "connection" in log_blob)
+        )
+        if pool_hit:
             root_svc = log_svc_hint or service
             # Prefer payment if logs mention payment pool even when ticket is checkout
             if "payment" in log_blob and "payment-service" not in root_svc:
@@ -141,7 +151,12 @@ def rule_based_rca(pack: EvidencePack) -> RCAResult:
             actions.append("Reset demo chaos fault_mode=db_pool if injected")
             if root_svc not in affected:
                 affected.append(root_svc)
-        elif "cache miss" in log_blob or ("redis" in log_blob and "cache" in log_blob):
+        elif (
+            "cache miss" in log_blob
+            or ("redis" in log_blob and "cache" in log_blob)
+            or ("redis" in log_blob and "miss" in log_blob)
+            or "falling back to origin" in log_blob
+        ):
             root_svc = log_svc_hint or service
             bit = f"{root_svc} high latency due to cache miss / cold redis keyspace"
             if bit not in cause_bits:
@@ -388,7 +403,13 @@ def _prefer_dependency_root(
         ]
         blob = " ".join(str(r.get("line") or "") for r in peer_logs).lower()
         log_boost = ""
-        if "connection pool" in blob or "pool exhausted" in blob:
+        if (
+            "connection pool" in blob
+            or "pool exhausted" in blob
+            or "maxpoolsize" in blob
+            or "could not obtain jdbc" in blob
+            or ("jdbc" in blob and "connection" in blob)
+        ):
             score += 5
             log_boost = f"{peer} database connection pool exhaustion"
         elif "gateway timeout" in blob or "payment gateway" in blob:

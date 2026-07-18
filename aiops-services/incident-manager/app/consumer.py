@@ -142,7 +142,21 @@ class AnomalyConsumer:
         incident: Incident,
         anomaly: Optional[AnomalyEvent] = None,
     ) -> None:
-        """Push new tickets to Redis + Decision Engine + RCA (best-effort)."""
+        """
+        Single control-plane fan-out after a new ticket is created.
+
+        Primary path
+        ------------
+        Decision Engine only → policy selects escalate / gated remediate / RCA.
+        RCA (Bedrock) is invoked *by* Decision Engine on medium/high-no-pattern
+        bands — not unconditionally from Incident Manager.
+
+        Legacy / emergency
+        ------------------
+        ENABLE_DIRECT_RCA_FANOUT=true restores IM → RCA HTTP (dual path; costlier).
+        If Decision Engine is disabled, we fall back to direct RCA so demos
+        still get root_cause without a silent black hole.
+        """
         if settings.enable_redis_incident_fanout:
             try:
                 enqueue(
@@ -154,13 +168,30 @@ class AnomalyConsumer:
                 ERRORS_TOTAL.labels(stage="redis").inc()
                 logger.warning("incident fan-out failed: %s", exc)
 
-        # Policy routing first (cost-aware: may escalate without LLM)
+        decision_ok = False
         if self.decision.enabled:
-            self.decision.push(incident, anomaly=anomaly)
+            result = self.decision.push(incident, anomaly=anomaly)
+            decision_ok = bool(result.get("ok"))
 
-        # RCA hook (async); Decision Engine may also call RCA on medium band
-        if self.rca.enabled:
+        # Direct RCA only when explicitly enabled, or when DE is unavailable
+        # so the pipeline still produces RCA without dual-calling both.
+        want_direct_rca = settings.enable_direct_rca_fanout or (
+            not self.decision.enabled and self.rca.enabled
+        )
+        if want_direct_rca and self.rca.enabled:
+            logger.info(
+                "direct RCA fan-out incident=%s reason=%s",
+                incident.id,
+                "RCA_ALWAYS_ON"
+                if settings.enable_direct_rca_fanout
+                else "decision_engine_disabled",
+            )
             self.rca.push_incident(incident)
+        elif not decision_ok and not self.decision.enabled:
+            logger.warning(
+                "no control plane for incident=%s (decision off, direct RCA off)",
+                incident.id,
+            )
 
     def _refresh_open_gauge(self) -> None:
         try:

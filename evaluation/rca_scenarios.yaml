@@ -587,3 +587,83 @@ scenarios:
       service: checkout
       error_rate: 0.5
       fault_mode: db_pool
+
+  # --- Paraphrased / hold-out wording (not copy-paste of rule templates) ---
+  - scenario_id: rca-16-paraphrase-pool
+    description: >
+      HOLD-OUT wording — pool saturation described without exact rule template
+      strings; still must identify payment DB pool class.
+    ticket_service: checkout-service
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: checkout-service
+          value: 0.33
+        - name: http_error_rate
+          service: payment-service
+          value: 0.61
+        - name: http_latency_p95_seconds
+          service: payment-service
+          value: 1.9
+      logs:
+        - service: payment-service
+          line: "ERROR could not obtain JDBC connection; maxPoolSize reached waiting 30s order=ord-p16"
+        - service: checkout-service
+          line: "ERROR downstream payment returned 503 Service Unavailable"
+      traces:
+        - service: checkout-service
+          pattern: "checkout → payment client error"
+          duration_ms: 1900
+          status: error
+    ground_truth_root_cause: "payment-service database connection pool exhaustion"
+    affected_services:
+      - payment-service
+      - checkout-service
+    expected_actions:
+      - "Raise payment DB pool / fix leak"
+    keywords:
+      - payment-service
+      - connection
+      - pool
+      - JDBC
+    live_chaos:
+      service: payment
+      error_rate: 0.5
+      fault_mode: db_pool
+
+  - scenario_id: rca-17-paraphrase-cache
+    description: >
+      HOLD-OUT wording — redis cold path without exact "cache miss storm" phrase.
+    ticket_service: checkout-service
+    symptoms:
+      metrics:
+        - name: http_latency_p95_seconds
+          service: checkout-service
+          value: 1.7
+        - name: http_error_rate
+          service: checkout-service
+          value: 0.04
+      logs:
+        - service: checkout-service
+          line: "WARN redis GET miss key=sess:* falling back to origin DB (hot path degraded)"
+        - service: checkout-service
+          line: "INFO origin query elapsed_ms=1600 after redis miss"
+      traces:
+        - service: checkout-service
+          pattern: "slow origin after redis"
+          duration_ms: 1650
+          status: ok
+    ground_truth_root_cause: "checkout-service high latency due to cache miss / cold redis keyspace"
+    affected_services:
+      - checkout-service
+    expected_actions:
+      - "Warm redis keyspace / check redis availability"
+    keywords:
+      - redis
+      - miss
+      - latency
+      - checkout-service
+    live_chaos:
+      service: checkout
+      extra_latency_ms: 1200
+      fault_mode: cache_miss

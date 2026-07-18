@@ -26,22 +26,29 @@ checkout/payment (OTel)
         │ PromQL pull
         ▼
  anomaly-detector ── hybrid score + multi-signal context + confidence
-        │ Redis: aiops:anomalies (+ aiops:decisions mirror)
-        ├──────────────────► incident-manager (tickets, correlation, UI)
-        │                           │
-        │                           ▼
-        │                     rca-engine
-        │                       ├ topology catalog (config/service_topology.yaml)
-        │                       ├ neighbor evidence expand (upstream/downstream)
-        │                       └ Bedrock | topology-aware rules
-        │                           │
-        │                           ▼
-        │                     remediation (risk-gated)
+        │ Redis: aiops:anomalies
+        ▼
+ incident-manager (tickets, correlation, topology UI, Trace deep-links)
         │
-        └──► decision-engine (policy: auto / RCA / escalate)
-                    │
-                    └──► engine-qa (meta-SLOs from on-call labels)
+        ▼  ★ single control plane (default)
+ decision-engine (policy: auto / RCA / escalate)
+        │
+        ├ conf < 60 ──────────────► escalate (no LLM)
+        ├ conf ≥ 85 + pattern ────► remediation propose (gated, no force)
+        └ medium / high no-pattern ► rca-engine
+                                      ├ topology catalog + neighbor expand
+                                      └ Bedrock | topology-aware rules
+                                            │
+                                            ▼
+                                      remediation (risk-gated + optional API key)
+                                            │
+                                            ▼
+                                      feedback / engine-qa
 ```
+
+**Control-plane invariant:** Incident Manager does **not** call RCA by default.
+`ENABLE_DIRECT_RCA_FANOUT=true` restores the legacy dual path for demos that skip DE.
+RCA Redis poll defaults **off** so `aiops:incidents` is not a second auto-RCA path.
 
 ## Topology (RCA)
 
@@ -98,6 +105,9 @@ logs), prefer that dependency as `root_cause` — avoid wrong-hop blame on the t
 ## Evaluation honesty
 
 - Offline RCA uses the **same** `rule_based_rca` path as production fallback.
-- Dataset keywords overlap intentionally with realistic log lines (pool exhaustion, cache miss) — that is how production runbooks work.
-- CI requires system accuracy **> best baseline** (random / always-error-rate / empty).
-- 100% on a 10-scenario set is a **regression gate**, not a claim of perfect prod RCA.
+- Scoring requires **fault-class** agreement (pool / cache / gateway / …) and
+  wrong-hop service guards — keywords alone are not enough.
+- Hold-out scenarios use **paraphrased** log wording (JDBC maxPoolSize, redis GET miss)
+  so the suite is not pure template self-match.
+- CI requires accuracy ≥ 0.70 **and** system **> best baseline**.
+- Report offline rule-path accuracy as a **regression gate**, not “production quality = 100%”.

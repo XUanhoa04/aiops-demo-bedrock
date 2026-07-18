@@ -34,6 +34,7 @@ test:
 	PYTHONPATH=shared:aiops-services/engine-qa pytest -q aiops-services/engine-qa/tests
 	PYTHONPATH=shared:aiops-services/incident-manager pytest -q aiops-services/incident-manager/tests
 	PYTHONPATH=shared:aiops-services/rca-engine pytest -q aiops-services/rca-engine/tests
+	PYTHONPATH=shared:aiops-services/remediation pytest -q aiops-services/remediation/tests
 
 lint-compose:
 	docker compose config -q

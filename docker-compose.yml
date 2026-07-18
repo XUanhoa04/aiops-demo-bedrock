@@ -237,8 +237,10 @@ services:
       REDIS_QUEUE_ANOMALIES: ${REDIS_QUEUE_ANOMALIES:-aiops:anomalies}
       REDIS_QUEUE_INCIDENTS: ${REDIS_QUEUE_INCIDENTS:-aiops:incidents}
       INCIDENT_DB_PATH: ${INCIDENT_DB_PATH:-/data/incidents.db}
-      # Wire to RCA: async webhook + Redis fan-out (aiops:incidents)
+      # Single control plane: Decision Engine owns RCA/remediate/escalate.
+      # Direct IM→RCA HTTP fan-out OFF by default (ENABLE_DIRECT_RCA_FANOUT=true for legacy).
       RCA_ENGINE_URL: ${RCA_ENGINE_URL:-http://aiops-rca-engine:8003}
+      ENABLE_DIRECT_RCA_FANOUT: ${ENABLE_DIRECT_RCA_FANOUT:-false}
       DECISION_ENGINE_URL: ${DECISION_ENGINE_URL:-http://aiops-decision-engine:8006}
       ENABLE_DECISION_ENGINE: ${ENABLE_DECISION_ENGINE:-true}
       # Browser-facing Grafana for one-click "View Trace" (not Docker DNS)
@@ -307,7 +309,8 @@ services:
       EVIDENCE_WINDOW_MINUTES: ${EVIDENCE_WINDOW_MINUTES:-15}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       REDIS_QUEUE_INCIDENTS: ${REDIS_QUEUE_INCIDENTS:-aiops:incidents}
-      ENABLE_REDIS_POLL: ${ENABLE_REDIS_POLL:-true}
+      # Default false: avoid dual path (IM Redis fan-out + Decision Engine both calling RCA)
+      ENABLE_REDIS_POLL: ${ENABLE_REDIS_POLL:-false}
       GRAFANA_PUBLIC_URL: ${GRAFANA_PUBLIC_URL:-http://localhost:3000}
       TEMPO_DATASOURCE_UID: ${TEMPO_DATASOURCE_UID:-tempo}
       LOKI_DATASOURCE_UID: ${LOKI_DATASOURCE_UID:-loki}
@@ -358,6 +361,8 @@ services:
       SIMULATE_ONLY: ${SIMULATE_ONLY:-false}
       DOCKER_HOST: ${DOCKER_HOST:-}
       DEFAULT_EXECUTOR: ${DEFAULT_EXECUTOR:-remediation-bot}
+      # Empty = open localhost demo; set for production-like operator auth (X-API-Key)
+      REMEDIATION_API_KEY: ${REMEDIATION_API_KEY:-}
     ports:
       - "8004:8004"
       - "8501:8501"

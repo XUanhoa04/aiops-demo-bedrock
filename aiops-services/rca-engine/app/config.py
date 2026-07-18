@@ -31,10 +31,12 @@ class Settings(BaseSettings):
     max_neighbor_log_lines: int = 15
     max_neighbor_traces: int = 8
 
-    # Redis optional poll of new incidents (async path)
+    # Redis optional poll of new incidents (async path).
+    # Default OFF: Decision Engine owns RCA invocation (single control plane).
+    # Enable only if you intentionally want IM Redis fan-out → RCA without DE.
     redis_url: str = "redis://redis:6379/0"
     redis_queue_incidents: str = "aiops:incidents"
-    enable_redis_poll: bool = True
+    enable_redis_poll: bool = False
 
     # Amazon Bedrock
     aws_access_key_id: str = ""
