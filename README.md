@@ -265,7 +265,7 @@ python evaluation/evaluate_rca.py --mode online
 | Suite | Metric | Notes |
 |-------|--------|--------|
 | **Anomaly** (8) | F1 gate ≥ 0.75 in CI | Hybrid detector on labeled series |
-| **RCA** (12 incl. hard) | Accuracy gate ≥ 0.70 in CI | rule_based + keyword/Jaccard match |
+| **RCA** (15 incl. topology wrong-hop) | Accuracy gate ≥ 0.70 in CI | rule_based + topology + keyword/Jaccard |
 | **Baselines** | System must **beat** random / always-error / empty | Prevents “dataset overfit” theater |
 
 ```bash

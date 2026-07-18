@@ -1,0 +1,68 @@
+# =============================================================================
+# Service topology catalog (demo + RCA grounding)
+# =============================================================================
+#
+# Why topology matters for RCA
+# ----------------------------
+# Alerts fire on the *symptom* service (e.g. checkout 502s) while the root cause
+# often sits on an *upstream* dependency (payment DB pool). Without a graph,
+# models and rules over-blame the ticket owner.
+#
+# Production sources: service mesh (Istio), OpenTelemetry service graph,
+# K8s owner refs, CMDB. Here we ship a small static catalog matching the demo
+# apps, plus optional edges inferred at runtime from Tempo spans.
+#
+# Semantics
+# ---------
+#   depends_on  = services this service *calls* (upstream dependencies)
+#   shared_deps = non-service shared infra (redis, postgres, …)
+#   provides    = optional logical capabilities (for matching)
+# =============================================================================
+
+version: "1.0"
+description: "AIOps demo topology — checkout depends on payment"
+
+# Canonical service graph (caller → callee)
+services:
+  checkout-service:
+    display_name: Checkout
+    depends_on:
+      - payment-service
+    shared_deps:
+      - redis-cache
+      - postgres-orders
+    aliases:
+      - checkout
+      - aiops-checkout
+
+  payment-service:
+    display_name: Payment
+    depends_on: []
+    shared_deps:
+      - redis-cache
+      - postgres-payments
+      - payment-gateway
+    aliases:
+      - payment
+      - aiops-payment
+
+# Shared infrastructure (not microservices, but RCA targets)
+shared_infrastructure:
+  redis-cache:
+    kind: cache
+    notes: "Card tokens / session cache — cache miss storms raise latency"
+  postgres-orders:
+    kind: database
+    notes: "Checkout order DB — pool exhaustion → local checkout errors"
+  postgres-payments:
+    kind: database
+    notes: "Payment ledger DB — pool exhaustion cascades into checkout 502"
+  payment-gateway:
+    kind: external
+    notes: "Third-party PSP — timeouts surface as payment + checkout errors"
+
+# Default blast-radius ranking: prefer root on dependencies when they are sicker
+rca_hints:
+  prefer_dependency_root_when_correlated: true
+  error_rate_neighbor_margin: 0.05   # neighbor err must exceed primary by this
+  latency_neighbor_margin_seconds: 0.2

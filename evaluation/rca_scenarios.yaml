@@ -458,3 +458,132 @@ scenarios:
       error_rate: 0.08
       extra_latency_ms: 1400
       fault_mode: cache_miss
+
+  # --- Topology / wrong-hop blame scenarios ---
+  - scenario_id: rca-13-wrong-hop-checkout-symptom
+    description: >
+      TOPOLOGY — Ticket is on checkout-service (symptom 502s) but payment DB pool
+      is the root. RCA must not stop at checkout.
+    ticket_service: checkout-service
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: checkout-service
+          value: 0.32
+        - name: http_error_rate
+          service: payment-service
+          value: 0.55
+        - name: http_latency_p95_seconds
+          service: payment-service
+          value: 1.6
+      logs:
+        - service: payment-service
+          line: "ERROR payment-service database connection pool exhaustion order_id=ord-wh1"
+        - service: checkout-service
+          line: "ERROR payment failed: 502 cascade from payment-service"
+      traces:
+        - service: checkout-service
+          pattern: "checkout → payment span error"
+          duration_ms: 1700
+          status: error
+        - service: payment-service
+          pattern: "pay DB pool wait"
+          duration_ms: 1600
+          status: error
+    ground_truth_root_cause: "payment-service database connection pool exhaustion"
+    affected_services:
+      - checkout-service
+      - payment-service
+    expected_actions:
+      - "Investigate payment-service first (upstream of checkout)"
+      - "Do not restart checkout until payment healthy"
+    keywords:
+      - payment-service
+      - connection pool
+      - pool exhaustion
+      - upstream
+    live_chaos:
+      service: payment
+      error_rate: 0.5
+      extra_latency_ms: 400
+      fault_mode: db_pool
+
+  - scenario_id: rca-14-wrong-hop-gateway
+    description: >
+      TOPOLOGY — Checkout latency/errors while payment gateway timeouts are the root.
+    ticket_service: checkout-service
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: checkout-service
+          value: 0.28
+        - name: http_latency_p95_seconds
+          service: checkout-service
+          value: 2.0
+        - name: http_error_rate
+          service: payment-service
+          value: 0.4
+        - name: http_latency_p95_seconds
+          service: payment-service
+          value: 2.5
+      logs:
+        - service: payment-service
+          line: "ERROR payment gateway timeout (injected) fault_mode=gateway_timeout"
+        - service: checkout-service
+          line: "ERROR upstream dependency timeout (payment gateway)"
+      traces:
+        - service: checkout-service
+          pattern: "checkout → payment timeout"
+          duration_ms: 2500
+          status: error
+    ground_truth_root_cause: "payment gateway timeout / dependency failure"
+    affected_services:
+      - checkout-service
+      - payment-service
+    expected_actions:
+      - "Check payment gateway / payment-service chaos"
+    keywords:
+      - payment gateway
+      - gateway timeout
+      - dependency
+      - payment-service
+    live_chaos:
+      service: payment
+      error_rate: 0.4
+      extra_latency_ms: 1500
+      fault_mode: gateway_timeout
+
+  - scenario_id: rca-15-local-root-not-upstream
+    description: >
+      TOPOLOGY negative — Checkout has its own DB pool exhaustion; payment is healthy.
+      Must NOT blame payment just because it is upstream in the catalog.
+    ticket_service: checkout-service
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: checkout-service
+          value: 0.5
+        - name: http_error_rate
+          service: payment-service
+          value: 0.01
+      logs:
+        - service: checkout-service
+          line: "ERROR database connection pool exhausted (no free connections) fault_mode=db_pool"
+      traces:
+        - service: checkout-service
+          pattern: "checkout local DB error before payment call"
+          duration_ms: 400
+          status: error
+    ground_truth_root_cause: "checkout-service database connection pool exhaustion"
+    affected_services:
+      - checkout-service
+    expected_actions:
+      - "Fix checkout DB pool (not payment)"
+    keywords:
+      - checkout-service
+      - connection pool
+      - pool exhausted
+    live_chaos:
+      service: checkout
+      error_rate: 0.5
+      fault_mode: db_pool

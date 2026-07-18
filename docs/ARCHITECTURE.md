@@ -16,7 +16,10 @@ checkout/payment (OTel)
         ├──────────────────► incident-manager (tickets, correlation, UI)
         │                           │
         │                           ▼
-        │                     rca-engine (evidence + Bedrock|rules)
+        │                     rca-engine
+        │                       ├ topology catalog (config/service_topology.yaml)
+        │                       ├ neighbor evidence expand (upstream/downstream)
+        │                       └ Bedrock | topology-aware rules
         │                           │
         │                           ▼
         │                     remediation (risk-gated)
@@ -25,6 +28,16 @@ checkout/payment (OTel)
                     │
                     └──► engine-qa (meta-SLOs from on-call labels)
 ```
+
+## Topology (RCA)
+
+Static catalog: `config/service_topology.yaml` (checkout → payment + shared redis/DB).
+
+At gather time RCA also merges **runtime edges** from Tempo (`root_service` / patterns)
+and pulls RED + error logs for **upstream/downstream** neighbors into `EvidencePack`.
+
+Rule + prompt policy: if an upstream is significantly sicker (error/latency margin +
+logs), prefer that dependency as `root_cause` — avoid wrong-hop blame on the ticket owner.
 
 ## Why these algorithms & weights
 
@@ -46,7 +59,8 @@ checkout/payment (OTel)
 | Detector state | In-process deques | Feature store / stream processor; survive restarts |
 | Auth | Open APIs on localhost | mTLS, SSO, RBAC on approve/execute |
 | Multi-tenant | Single compose network | Namespace isolation, per-tenant quotas |
-| Eval dataset | 10 RCA + 8 anomaly scenarios | Larger labeled set + shadow traffic + human agreement |
+| Topology | Static YAML + Tempo-inferred edges (demo graph) | Mesh/CMDB service graph + continuous discovery |
+| Eval dataset | 15 RCA + 8 anomaly scenarios | Larger labeled set + shadow traffic + human agreement |
 | Auto-remediation | Propose / low-risk chaos reset only | Change windows, canary, automated rollback |
 
 ## Safety invariants (keep these)

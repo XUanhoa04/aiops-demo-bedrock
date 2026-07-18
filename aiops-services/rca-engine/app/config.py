@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     evidence_window_minutes: int = 15
     max_log_lines: int = 40
     max_traces: int = 15
+    # Neighbor expansion (topology-aware RCA)
+    # Env: TOPOLOGY_PATH — path to config/service_topology.yaml
+    topology_path: str = ""
+    enable_topology_expand: bool = True
+    max_neighbor_log_lines: int = 15
+    max_neighbor_traces: int = 8
 
     # Redis optional poll of new incidents (async path)
     redis_url: str = "redis://redis:6379/0"

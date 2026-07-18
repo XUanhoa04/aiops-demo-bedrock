@@ -8,9 +8,11 @@ Ground-truth datasets + offline harnesses for **quantitative** quality of:
 ## Why a dataset?
 
 Without fixed scenarios, every model/prompt change is “it looked good in the demo”.  
-This mini set (**12 RCA** incl. hard/partial-evidence + **8 anomaly** scenarios) is a
-**regression suite** you can re-run after every change to rules, thresholds, or Bedrock prompts.
-CI also requires the system to **beat naive baselines** (`evaluate_baselines.py`).
+This mini set (**15 RCA** incl. hard + **topology wrong-hop** scenarios + **8 anomaly** series)
+is a **regression suite** you can re-run after every change to rules, thresholds, topology, or
+Bedrock prompts. CI also requires the system to **beat naive baselines** (`evaluate_baselines.py`).
+
+Topology catalog used by RCA: `config/service_topology.yaml` (checkout → payment).
 
 ## Layout
 

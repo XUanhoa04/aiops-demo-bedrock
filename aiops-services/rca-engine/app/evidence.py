@@ -24,10 +24,19 @@ from typing import Any, Optional
 
 import httpx
 
+from aiops_shared.topology import (
+    infer_edges_from_traces,
+    load_topology_catalog,
+)
+
 from app.config import settings
 from app.models import EvidencePack
 
 logger = logging.getLogger(__name__)
+
+_CHANGE_RE = re.compile(
+    r"(?i)\b(deploy|rollback|restart|chaos|fault.?inject|scale|release|config.?change)\b"
+)
 
 # Common OTel / app log patterns for correlating logs → Tempo
 _TRACE_ID_RE = re.compile(
@@ -143,18 +152,98 @@ class EvidenceGatherer:
         # Enrich logs with extracted trace_id; pick best primary for deep-link
         pack.error_logs = [_enrich_log_trace_id(row) for row in pack.error_logs]
         pack.primary_trace_id = _select_primary_trace_id(pack)
+
+        # --- Topology neighborhood + neighbor evidence expansion ---
+        self._attach_topology_and_neighbors(pack, service, start, end)
+
+        # Change/chaos markers from primary + neighbor logs (deploy/chaos context)
+        pack.change_events = _extract_change_events(
+            pack.error_logs + pack.neighbor_logs
+        )
+
         logger.info(
             "evidence gathered incident=%s service=%s prom=%s loki_lines=%s "
-            "traces=%s primary_trace_id=%s errors=%s",
+            "traces=%s neighbors=%s primary_trace_id=%s errors=%s",
             pack.incident_id,
             service,
             pack.sources_ok.get("prometheus"),
             len(pack.error_logs),
             len(pack.traces),
+            (pack.topology or {}).get("upstream"),
             pack.primary_trace_id,
             pack.gather_errors,
         )
         return pack
+
+    def _attach_topology_and_neighbors(
+        self,
+        pack: EvidencePack,
+        service: str,
+        start: datetime,
+        end: datetime,
+    ) -> None:
+        """
+        Resolve static topology (+ Tempo-inferred edges) and gather RED/logs
+        for upstream/downstream neighbors so RCA can blame dependency roots.
+        """
+        if not settings.enable_topology_expand:
+            pack.topology = {"service": service, "source": "disabled"}
+            return
+
+        catalog = load_topology_catalog(settings.topology_path or None)
+        edges = infer_edges_from_traces(service, pack.traces)
+        nb = catalog.with_inferred_edges(service, edges)
+        pack.topology = nb.to_dict()
+
+        neighbor_metrics: dict[str, Any] = {}
+        neighbor_logs: list[dict[str, Any]] = []
+        neighbor_traces: list[dict[str, Any]] = []
+
+        for peer in nb.all_neighbors():
+            try:
+                m = self._gather_metrics(peer, start, end)
+                instant = (m or {}).get("instant") or {}
+                neighbor_metrics[peer] = {
+                    "instant": instant,
+                    "relation": (
+                        "upstream"
+                        if peer in nb.upstream
+                        else "downstream"
+                        if peer in nb.downstream
+                        else "peer"
+                    ),
+                }
+            except Exception as exc:
+                pack.gather_errors.append(f"neighbor_metrics:{peer}: {exc}")
+
+            try:
+                logs = self._gather_logs(peer, start, end)
+                for row in logs[: settings.max_neighbor_log_lines]:
+                    row = _enrich_log_trace_id(dict(row))
+                    labels = dict(row.get("labels") or {})
+                    labels.setdefault("service_name", peer)
+                    labels["topology_relation"] = (
+                        "upstream" if peer in nb.upstream else "downstream"
+                    )
+                    row["labels"] = labels
+                    row["neighbor_service"] = peer
+                    neighbor_logs.append(row)
+            except Exception as exc:
+                pack.gather_errors.append(f"neighbor_logs:{peer}: {exc}")
+
+            try:
+                trs = self._gather_traces(peer, start, end)
+                for tr in trs[: settings.max_neighbor_traces]:
+                    tr = dict(tr)
+                    tr["neighbor_service"] = peer
+                    neighbor_traces.append(tr)
+            except Exception as exc:
+                pack.gather_errors.append(f"neighbor_traces:{peer}: {exc}")
+
+        pack.neighbor_metrics = neighbor_metrics
+        pack.neighbor_logs = neighbor_logs
+        pack.neighbor_traces = neighbor_traces
+        pack.sources_ok["topology"] = True
 
     # ------------------------------------------------------------------
     # Prometheus
@@ -528,16 +617,39 @@ def _enrich_log_trace_id(row: dict[str, Any]) -> dict[str, Any]:
 
 def _select_primary_trace_id(pack: EvidencePack) -> Optional[str]:
     """Prefer slowest Tempo trace; else first log-correlated trace_id."""
-    if pack.traces:
+    pool = list(pack.traces or []) + list(pack.neighbor_traces or [])
+    if pool:
         ranked = sorted(
-            pack.traces,
+            pool,
             key=lambda t: (t.get("duration_ms") or 0),
             reverse=True,
         )
         tid = ranked[0].get("trace_id")
         if tid:
             return str(tid)
-    for row in pack.error_logs:
+    for row in list(pack.error_logs or []) + list(pack.neighbor_logs or []):
         if row.get("trace_id"):
             return str(row["trace_id"])
     return None
+
+
+def _extract_change_events(logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Best-effort deploy/chaos markers for RCA change context."""
+    out: list[dict[str, Any]] = []
+    for row in logs or []:
+        line = row.get("line") or ""
+        m = _CHANGE_RE.search(line)
+        if not m:
+            continue
+        out.append(
+            {
+                "type": m.group(1).lower(),
+                "message": line[:240],
+                "service": (row.get("labels") or {}).get("service_name")
+                or row.get("neighbor_service"),
+                "source": "log_derived",
+            }
+        )
+        if len(out) >= 15:
+            break
+    return out

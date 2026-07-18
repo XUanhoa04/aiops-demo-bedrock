@@ -80,7 +80,7 @@ class LLMUsage(BaseModel):
 
 
 class EvidencePack(BaseModel):
-    """Grounded context gathered from Prom/Loki/Tempo + incident ticket."""
+    """Grounded context gathered from Prom/Loki/Tempo + topology + incident."""
 
     incident_id: str
     service_name: str
@@ -96,8 +96,20 @@ class EvidencePack(BaseModel):
     # Convenience: best trace id extracted during gather (logs or Tempo)
     primary_trace_id: Optional[str] = None
 
-    def to_prompt_block(self, max_chars: int = 12000) -> str:
-        """Compact, LLM-friendly dump of only grounded facts."""
+    # Topology-aware RCA fields
+    # neighborhood: upstream (depends_on), downstream (callers), shared_deps
+    topology: dict[str, Any] = Field(default_factory=dict)
+    # Per-neighbor RED instant metrics {svc: {http_error_rate, ...}}
+    neighbor_metrics: dict[str, Any] = Field(default_factory=dict)
+    # Error logs collected from neighbor services (tagged with labels.service_name)
+    neighbor_logs: list[dict[str, Any]] = Field(default_factory=list)
+    # Traces where root_service is a neighbor
+    neighbor_traces: list[dict[str, Any]] = Field(default_factory=list)
+    # Best-effort change/chaos markers derived from logs
+    change_events: list[dict[str, Any]] = Field(default_factory=list)
+
+    def to_prompt_block(self, max_chars: int = 14000) -> str:
+        """Compact, LLM-friendly dump of only grounded facts (incl. topology)."""
         import json
 
         payload = {
@@ -123,13 +135,24 @@ class EvidencePack(BaseModel):
                 "start": self.window_start_iso,
                 "end": self.window_end_iso,
             },
+            # Service graph — prefer dependency root when neighbor is sicker
+            "topology": self.topology,
             "metrics_summary": self.metrics_summary,
+            "neighbor_metrics": self.neighbor_metrics,
             # Logs may include extracted trace_id — model must cite them in evidence[]
             "error_logs": self.error_logs[:40],
+            "neighbor_logs": self.neighbor_logs[:25],
             "traces": self.traces[:15],
+            "neighbor_traces": self.neighbor_traces[:10],
+            "change_events": self.change_events[:15],
             "primary_trace_id_hint": self.primary_trace_id,
             "gather_errors": self.gather_errors,
             "sources_ok": self.sources_ok,
+            "topology_guidance": (
+                "upstream = services this service *calls* (dependencies). "
+                "If an upstream has higher error_rate/latency and matching error logs, "
+                "prefer that dependency as root_cause — the ticket service may be a symptom."
+            ),
         }
         text = json.dumps(payload, indent=2, default=str)
         if len(text) > max_chars:

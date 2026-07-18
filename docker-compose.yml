@@ -283,6 +283,8 @@ services:
       OTEL_SERVICE_NAME: aiops-rca-engine
       SERVICE_NAME: aiops-rca-engine
       PORT: "8003"
+      TOPOLOGY_PATH: ${TOPOLOGY_PATH:-/app/config/service_topology.yaml}
+      ENABLE_TOPOLOGY_EXPAND: ${ENABLE_TOPOLOGY_EXPAND:-true}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}

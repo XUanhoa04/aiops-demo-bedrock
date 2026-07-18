@@ -65,49 +65,83 @@ def load_scenarios(path: Path) -> list[dict[str, Any]]:
 
 
 def scenario_to_evidence_pack(sc: dict[str, Any]):
-    """Map dataset symptoms → EvidencePack (no live Prom/Loki/Tempo)."""
+    """Map dataset symptoms → EvidencePack (no live Prom/Loki/Tempo) + topology."""
+    from aiops_shared.topology import load_topology_catalog
     from app.models import EvidencePack
 
     symptoms = sc.get("symptoms") or {}
     metrics_list = symptoms.get("metrics") or []
     logs = symptoms.get("logs") or []
     traces = symptoms.get("traces") or []
-    services = sc.get("affected_services") or ["unknown"]
-    primary = services[0]
+    # Ticket service may be symptom-only (wrong-hop eval): prefer explicit field
+    primary = (
+        sc.get("ticket_service")
+        or (sc.get("affected_services") or ["unknown"])[0]
+    )
 
     instant: dict[str, Any] = {}
-    for m in metrics_list:
-        if m.get("service") == primary or len(metrics_list) == 1:
-            instant[str(m.get("name"))] = float(m.get("value") or 0)
-    # Also keep full multi-service view
     by_svc: dict[str, dict] = {}
     for m in metrics_list:
         svc = m.get("service") or primary
-        by_svc.setdefault(svc, {})[str(m.get("name"))] = float(m.get("value") or 0)
+        name = str(m.get("name"))
+        val = float(m.get("value") or 0)
+        by_svc.setdefault(svc, {})[name] = val
+        if svc == primary:
+            instant[name] = val
+    if not instant and by_svc.get(primary):
+        instant = dict(by_svc[primary])
 
     error_logs = []
+    neighbor_logs = []
     for i, row in enumerate(logs):
         tid = f"{'a' * 24}{i:08d}"
-        error_logs.append(
-            {
-                "line": row.get("line") or "",
-                "trace_id": tid,
-                "labels": {"service_name": row.get("service") or primary},
-            }
-        )
+        svc = row.get("service") or primary
+        entry = {
+            "line": row.get("line") or "",
+            "trace_id": tid,
+            "labels": {"service_name": svc},
+        }
+        if svc == primary:
+            error_logs.append(entry)
+        else:
+            entry["neighbor_service"] = svc
+            entry["labels"]["topology_relation"] = "upstream"
+            neighbor_logs.append(entry)
 
     trace_rows = []
+    neighbor_traces = []
     for i, t in enumerate(traces):
         tid = f"{'b' * 24}{i:08d}"
-        trace_rows.append(
-            {
-                "trace_id": tid,
-                "root_service": t.get("service") or primary,
-                "root_name": t.get("pattern") or "scenario",
-                "duration_ms": t.get("duration_ms") or 500,
-                "search_mode": "scenario_dataset",
-            }
-        )
+        svc = t.get("service") or primary
+        entry = {
+            "trace_id": tid,
+            "root_service": svc,
+            "root_name": t.get("pattern") or "scenario",
+            "duration_ms": t.get("duration_ms") or 500,
+            "search_mode": "scenario_dataset",
+        }
+        if svc == primary:
+            trace_rows.append(entry)
+        else:
+            entry["neighbor_service"] = svc
+            neighbor_traces.append(entry)
+
+    # Neighbor metrics for topology correlation
+    neighbor_metrics: dict[str, Any] = {}
+    for svc, m in by_svc.items():
+        if svc == primary:
+            continue
+        neighbor_metrics[svc] = {
+            "instant": m,
+            "relation": "upstream",
+        }
+
+    catalog = load_topology_catalog()
+    nb = catalog.neighborhood(primary)
+    # If scenario declares ticket on checkout but metrics on payment, ensure upstream
+    for svc in neighbor_metrics:
+        if svc not in nb.upstream and svc != primary:
+            nb.upstream.append(svc)
 
     now = datetime.now(timezone.utc).isoformat()
     pack = EvidencePack(
@@ -140,8 +174,18 @@ def scenario_to_evidence_pack(sc: dict[str, Any]):
         },
         error_logs=error_logs,
         traces=trace_rows,
-        primary_trace_id=trace_rows[0]["trace_id"] if trace_rows else None,
-        sources_ok={"prometheus": True, "loki": True, "tempo": True},
+        primary_trace_id=(trace_rows or neighbor_traces or [{}])[0].get("trace_id"),
+        sources_ok={
+            "prometheus": True,
+            "loki": True,
+            "tempo": True,
+            "topology": True,
+        },
+        topology=nb.to_dict(),
+        neighbor_metrics=neighbor_metrics,
+        neighbor_logs=neighbor_logs,
+        neighbor_traces=neighbor_traces,
+        change_events=list(sc.get("change_events") or []),
     )
     return pack
 

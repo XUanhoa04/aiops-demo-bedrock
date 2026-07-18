@@ -12,6 +12,7 @@
 | Decision Engine (policy table, gated remediate / RCA / escalate) | ✅ |
 | Incident Manager + correlation + Tempo deep-links | ✅ |
 | RCA grounded evidence + Bedrock + rule fallback | ✅ |
+| Topology catalog + neighbor evidence + wrong-hop rules | ✅ |
 | Remediation risk-gated + Streamlit UI | ✅ |
 | Feedback collector + Engine QA meta-SLOs | ✅ |
 | Dynamic multi-stage load + fault_mode chaos | ✅ |
