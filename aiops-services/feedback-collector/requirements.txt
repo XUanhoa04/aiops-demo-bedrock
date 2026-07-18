@@ -1,0 +1,3 @@
+# Feedback collector (on top of shared/requirements-base.txt)
+streamlit==1.40.2
+prometheus-client==0.21.1

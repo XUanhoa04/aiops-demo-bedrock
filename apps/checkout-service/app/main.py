@@ -32,11 +32,22 @@ SERVICE_NAME = os.getenv("SERVICE_NAME", "checkout-service")
 PORT = int(os.getenv("PORT", "8080"))
 PAYMENT_URL = os.getenv("PAYMENT_URL", "http://payment-service:8081")
 
-# Mutable runtime chaos state (also seeded from env)
+# Mutable runtime chaos state (also seeded from env).
+# fault_mode adds production-like error messages for logs/traces evaluation demos.
 _state: dict[str, Any] = {
     "error_rate": float(os.getenv("ERROR_RATE", "0.02")),
     "base_latency_ms": float(os.getenv("BASE_LATENCY_MS", "50")),
     "extra_latency_ms": 0.0,
+    # none | db_pool | cache_miss | dependency_timeout | cpu_throttle
+    "fault_mode": os.getenv("FAULT_MODE", "none"),
+}
+
+_FAULT_MESSAGES = {
+    "db_pool": "database connection pool exhausted (no free connections)",
+    "cache_miss": "cache miss storm — cold redis keyspace, fallback to origin",
+    "dependency_timeout": "upstream dependency timeout (payment gateway)",
+    "cpu_throttle": "worker thread pool saturated / CPU throttle",
+    "none": "checkout artificially failed",
 }
 
 
@@ -103,6 +114,10 @@ class ChaosConfig(BaseModel):
     error_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     base_latency_ms: float | None = Field(default=None, ge=0)
     extra_latency_ms: float | None = Field(default=None, ge=0)
+    fault_mode: str | None = Field(
+        default=None,
+        description="none|db_pool|cache_miss|dependency_timeout|cpu_throttle",
+    )
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -121,14 +136,22 @@ def get_chaos() -> dict:
 
 @app.post("/chaos")
 def set_chaos(cfg: ChaosConfig) -> dict:
-    """Runtime chaos injection — used by scripts/chaos.sh."""
+    """Runtime chaos injection — used by scripts/chaos.py and dynamic_load stages."""
     if cfg.error_rate is not None:
         _state["error_rate"] = cfg.error_rate
     if cfg.base_latency_ms is not None:
         _state["base_latency_ms"] = cfg.base_latency_ms
     if cfg.extra_latency_ms is not None:
         _state["extra_latency_ms"] = cfg.extra_latency_ms
-    logger.warning("chaos updated %s", _state)
+    if cfg.fault_mode is not None:
+        _state["fault_mode"] = cfg.fault_mode
+    logger.warning(
+        "chaos updated service=%s fault_mode=%s error_rate=%s extra_latency_ms=%s",
+        SERVICE_NAME,
+        _state.get("fault_mode"),
+        _state.get("error_rate"),
+        _state.get("extra_latency_ms"),
+    )
     return _state
 
 
@@ -145,13 +168,21 @@ async def checkout(body: CheckoutRequest) -> dict:
     delay_ms += random.uniform(0, delay_ms * 0.2)
     await asyncio.sleep(delay_ms / 1000.0)
 
-    # Local error injection
+    # Local error injection (message depends on fault_mode for realistic Loki lines)
     if random.random() < _state["error_rate"]:
         elapsed = (time.perf_counter() - start) * 1000
         req_counter.add(1, {**attrs, "status": "error"})
         err_counter.add(1, attrs)
         duration_hist.record(elapsed, {**attrs, "status": "error"})
-        raise HTTPException(status_code=503, detail="checkout artificially failed")
+        mode = str(_state.get("fault_mode") or "none")
+        detail = _FAULT_MESSAGES.get(mode, _FAULT_MESSAGES["none"])
+        logger.error(
+            "checkout failure fault_mode=%s detail=%s order_id=%s",
+            mode,
+            detail,
+            body.order_id,
+        )
+        raise HTTPException(status_code=503, detail=detail)
 
     # Downstream payment call (distributed trace)
     payment_status = "skipped"

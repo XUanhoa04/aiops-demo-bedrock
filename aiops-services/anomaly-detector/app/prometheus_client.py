@@ -1,10 +1,14 @@
 """
-Prometheus HTTP API client (instant queries).
+Prometheus HTTP API client — *pull* model.
 
-Points at LGTM's Prometheus-compatible endpoint (port 9090).
-Demo apps export OTEL metrics; LGTM converts them into PromQL-queryable series.
-When series are missing (cold start), we fall back to synthetic samples so the
-pipeline remains demoable before scrapes populate.
+Why query instead of remote_write?
+----------------------------------
+* Demo simplicity: no need to reconfigure every app's write path; LGTM already
+  accepts OTLP and exposes a Prom-compatible query API on :9090.
+* Isolation of blast radius: a buggy detector cannot corrupt TSDB write path.
+* Easy local testing: curl the same PromQL the service uses.
+
+Trade-off: pull latency = poll interval; not ideal for sub-second detection.
 """
 
 from __future__ import annotations
@@ -18,17 +22,67 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# PromQL templates — try demo-app custom metrics first, then OTel-style names,
+# then classic Prometheus RED names (http_requests_total / duration_seconds).
+ERROR_RATE_QUERIES = [
+    # Demo apps (checkout/payment) export these custom counters
+    (
+        'sum(rate(demo_http_requests_total{{service_name="{svc}",status="error"}}[2m])) '
+        '/ clamp_min(sum(rate(demo_http_requests_total{{service_name="{svc}"}}[2m])), 1e-9)'
+    ),
+    # Classic RED
+    (
+        'sum(rate(http_requests_total{{service="{svc}",status=~"5.."}}[2m])) '
+        '/ clamp_min(sum(rate(http_requests_total{{service="{svc}"}}[2m])), 1e-9)'
+    ),
+    (
+        'sum(rate(http_requests_total{{job="{svc}",code=~"5.."}}[2m])) '
+        '/ clamp_min(sum(rate(http_requests_total{{job="{svc}"}}[2m])), 1e-9)'
+    ),
+    # OTel histogram count with 5xx
+    (
+        'sum(rate(http_server_duration_milliseconds_count{{service_name="{svc}",'
+        'http_status_code=~"5.."}}[2m])) '
+        '/ clamp_min(sum(rate(http_server_duration_milliseconds_count'
+        '{{service_name="{svc}"}}[2m])), 1e-9)'
+    ),
+]
+
+REQUEST_RATE_QUERIES = [
+    'sum(rate(demo_http_requests_total{{service_name="{svc}"}}[2m]))',
+    'sum(rate(http_requests_total{{service="{svc}"}}[2m]))',
+    'sum(rate(http_requests_total{{job="{svc}"}}[2m]))',
+    'sum(rate(http_server_duration_milliseconds_count{{service_name="{svc}"}}[2m]))',
+]
+
+LATENCY_P95_QUERIES = [
+    # Demo histogram (ms) → convert to seconds for uniform thresholding
+    'histogram_quantile(0.95, sum(rate(demo_http_duration_ms_bucket{{service_name="{svc}"}}[2m])) by (le)) / 1000',
+    'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{{service="{svc}"}}[2m])) by (le))',
+    'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{{job="{svc}"}}[2m])) by (le))',
+    'histogram_quantile(0.95, sum(rate(http_server_duration_milliseconds_bucket{{service_name="{svc}"}}[2m])) by (le)) / 1000',
+]
+
+# p99 — preferred narrative for explainability ("p99 latency cao hơn X sigma…")
+LATENCY_P99_QUERIES = [
+    'histogram_quantile(0.99, sum(rate(demo_http_duration_ms_bucket{{service_name="{svc}"}}[2m])) by (le)) / 1000',
+    'histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{{service="{svc}"}}[2m])) by (le))',
+    'histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{{job="{svc}"}}[2m])) by (le))',
+    'histogram_quantile(0.99, sum(rate(http_server_duration_milliseconds_bucket{{service_name="{svc}"}}[2m])) by (le)) / 1000',
+]
+
 
 class PrometheusClient:
     def __init__(self, base_url: Optional[str] = None) -> None:
         self.base_url = (base_url or settings.prometheus_url).rstrip("/")
-        # Keep timeouts short: a cold LGTM or DNS blip must not exhaust the
-        # default thread pool (uvicorn healthchecks share it with to_thread).
-        self._client = httpx.Client(timeout=httpx.Timeout(2.0, connect=1.0))
+        self._client = httpx.Client(timeout=httpx.Timeout(2.5, connect=1.0))
         self._host_unreachable = False
 
     def close(self) -> None:
         self._client.close()
+
+    def reset_unreachable(self) -> None:
+        self._host_unreachable = False
 
     def query(self, promql: str) -> list[dict[str, Any]]:
         if self._host_unreachable:
@@ -39,31 +93,43 @@ class PrometheusClient:
             resp.raise_for_status()
             payload = resp.json()
             if payload.get("status") != "success":
-                logger.warning("prom query non-success: %s", payload)
+                logger.warning("prom non-success status=%s", payload.get("status"))
                 return []
             self._host_unreachable = False
             return payload.get("data", {}).get("result", [])
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-            # Fail fast for the rest of this poll cycle (and a few after).
             self._host_unreachable = True
-            logger.warning("prom unreachable base=%s err=%s", self.base_url, exc)
+            logger.warning("prometheus unreachable url=%s err=%s", self.base_url, exc)
             return []
         except Exception as exc:
-            logger.warning("prom query failed q=%s err=%s", promql[:80], exc)
+            logger.warning("prom query failed err=%s q=%s", exc, promql[:100])
             return []
 
-    def scalar(self, promql: str, default: float = 0.0) -> float:
-        results = self.query(promql)
-        if not results:
-            return default
-        try:
-            # result[0].value = [timestamp, "string_value"]
-            return float(results[0]["value"][1])
-        except (KeyError, IndexError, TypeError, ValueError):
-            return default
+    def first_scalar(self, templates: list[str], service: str) -> Optional[float]:
+        for tmpl in templates:
+            q = tmpl.format(svc=service)
+            results = self.query(q)
+            if not results:
+                continue
+            try:
+                val = float(results[0]["value"][1])
+                if val != val:  # NaN
+                    continue
+                return val
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+        return None
+
+    def scrape_service(self, service: str) -> dict[str, Optional[float]]:
+        """Return latest RED-ish features for one service (incl. p99 when available)."""
+        return {
+            "http_request_rate": self.first_scalar(REQUEST_RATE_QUERIES, service),
+            "http_error_rate": self.first_scalar(ERROR_RATE_QUERIES, service),
+            "http_latency_p95_seconds": self.first_scalar(LATENCY_P95_QUERIES, service),
+            "http_latency_p99_seconds": self.first_scalar(LATENCY_P99_QUERIES, service),
+        }
 
     def healthy(self) -> bool:
-        """Best-effort readiness; never blocks > ~1s (used only in /status)."""
         try:
             resp = self._client.get(
                 f"{self.base_url}/api/v1/status/buildinfo",
@@ -75,54 +141,3 @@ class PrometheusClient:
             return ok
         except Exception:
             return False
-
-    def reset_unreachable(self) -> None:
-        """Called at the start of each poll so we re-probe after LGTM boots."""
-        self._host_unreachable = False
-
-
-# PromQL helpers — OTEL HTTP metrics often land as:
-#   http_server_duration_milliseconds_bucket / http_server_request_duration_*
-# Naming varies by SDK version; we try multiple expressions and use the first hit.
-
-ERROR_RATE_QUERIES = [
-    # Prefer explicit counters if demo apps register them
-    'sum(rate(demo_http_requests_total{{service_name="{svc}",status="error"}}[2m])) '
-    '/ clamp_min(sum(rate(demo_http_requests_total{{service_name="{svc}"}}[2m])), 1e-9)',
-    'sum(rate(http_server_duration_milliseconds_count{{service_name="{svc}",'
-    'http_status_code=~"5.."}}[2m])) '
-    '/ clamp_min(sum(rate(http_server_duration_milliseconds_count{{service_name="{svc}"}}[2m])), 1e-9)',
-]
-
-LATENCY_P95_QUERIES = [
-    'histogram_quantile(0.95, sum(rate(demo_http_duration_ms_bucket{{service_name="{svc}"}}[2m])) by (le))',
-    'histogram_quantile(0.95, sum(rate(http_server_duration_milliseconds_bucket{{service_name="{svc}"}}[2m])) by (le))',
-]
-
-
-def query_error_rate(prom: PrometheusClient, service_name: str) -> Optional[float]:
-    for tmpl in ERROR_RATE_QUERIES:
-        q = tmpl.format(svc=service_name)
-        results = prom.query(q)
-        if results:
-            try:
-                return float(results[0]["value"][1])
-            except (KeyError, IndexError, ValueError, TypeError):
-                continue
-    return None
-
-
-def query_latency_p95(prom: PrometheusClient, service_name: str) -> Optional[float]:
-    for tmpl in LATENCY_P95_QUERIES:
-        q = tmpl.format(svc=service_name)
-        results = prom.query(q)
-        if results:
-            try:
-                val = float(results[0]["value"][1])
-                # NaN from empty histograms
-                if val != val:  # noqa: PLR0124 — NaN check
-                    continue
-                return val
-            except (KeyError, IndexError, ValueError, TypeError):
-                continue
-    return None

@@ -1,0 +1,4 @@
+# Remediation service (on top of shared/requirements-base.txt)
+streamlit==1.40.2
+docker==7.1.0
+prometheus-client==0.21.1

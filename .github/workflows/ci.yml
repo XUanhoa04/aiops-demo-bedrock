@@ -1,0 +1,108 @@
+# CI for AIOps demo — keep the CV repo green without needing AWS or a full stack.
+#
+# Gates
+# -----
+# 1. Compose file validity
+# 2. Unit tests (detector, decision-engine, engine-qa, incident-manager)
+# 3. Offline evaluation (anomaly P/R + RCA accuracy) with minimum thresholds
+# 4. Baseline comparison (system must beat naive baselines on RCA)
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  unit-and-eval:
+    name: Unit tests + offline evaluation
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r shared/requirements-base.txt
+          pip install -r aiops-services/anomaly-detector/requirements.txt
+          pip install -r aiops-services/decision-engine/requirements.txt
+          pip install -r aiops-services/engine-qa/requirements.txt
+          pip install -r aiops-services/incident-manager/requirements.txt
+          pip install pyyaml pytest
+
+      - name: Validate docker-compose
+        run: docker compose config -q
+
+      - name: Unit tests (per-service PYTHONPATH — each service uses package name `app`)
+        run: |
+          set -e
+          ROOT="${{ github.workspace }}"
+          export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/anomaly-detector"
+          pytest -q aiops-services/anomaly-detector/tests
+          export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/decision-engine"
+          pytest -q aiops-services/decision-engine/tests
+          export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/engine-qa"
+          pytest -q aiops-services/engine-qa/tests
+          export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/incident-manager"
+          pytest -q aiops-services/incident-manager/tests
+
+      - name: Offline anomaly evaluation (gate F1 ≥ 0.75)
+        env:
+          PYTHONPATH: ${{ github.workspace }}/shared:${{ github.workspace }}/aiops-services/anomaly-detector:${{ github.workspace }}
+        run: |
+          python evaluation/evaluate_anomaly.py \
+            --output evaluation/results/anomaly_ci.json
+          python - <<'PY'
+          import json, sys
+          from pathlib import Path
+          d = json.loads(Path("evaluation/results/anomaly_ci.json").read_text())
+          f1 = float(d["aggregate"]["f1"])
+          print(f"anomaly F1={f1:.3f}")
+          if f1 < 0.75:
+              print("FAIL: anomaly F1 below 0.75", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Offline RCA evaluation (gate accuracy ≥ 0.70)
+        env:
+          PYTHONPATH: ${{ github.workspace }}/shared:${{ github.workspace }}/aiops-services/rca-engine:${{ github.workspace }}
+        run: |
+          python evaluation/evaluate_rca.py --mode offline \
+            --output evaluation/results/rca_ci.json
+          python - <<'PY'
+          import json, sys
+          from pathlib import Path
+          d = json.loads(Path("evaluation/results/rca_ci.json").read_text())
+          acc = float(d["aggregate"]["accuracy"])
+          print(f"RCA accuracy={acc:.3f}")
+          if acc < 0.70:
+              print("FAIL: RCA accuracy below 0.70", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Baselines (system must beat random + always-error-rate)
+        env:
+          PYTHONPATH: ${{ github.workspace }}/shared:${{ github.workspace }}/aiops-services/rca-engine:${{ github.workspace }}
+        run: |
+          python evaluation/evaluate_baselines.py \
+            --output evaluation/results/baselines_ci.json \
+            --require-beats-baselines
+
+      - name: Upload evaluation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-results
+          path: evaluation/results/
+          if-no-files-found: ignore

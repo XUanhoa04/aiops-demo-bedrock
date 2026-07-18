@@ -1,0 +1,505 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "title": "AIOps Engine Health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "collapsed": false
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Feedback positive rate",
+      "description": "Share of 👍 across all cast thumbs (anomaly / RCA / action)",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "expr": "feedback_positive_rate",
+          "legendFormat": "positive_rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.75 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "RCA accuracy estimate",
+      "description": "👍 rate on rca_useful votes",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "targets": [
+        {
+          "expr": "rca_accuracy_estimate",
+          "legendFormat": "rca_accuracy",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.7 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "False positive count",
+      "description": "Feedback rows with anomaly_correct=false",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "targets": [
+        {
+          "expr": "false_positive_count",
+          "legendFormat": "fp_count",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 3 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Anomaly precision estimate",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "targets": [
+        {
+          "expr": "anomaly_precision_estimate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0.7 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Quality gauges over time",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 6 },
+      "targets": [
+        {
+          "expr": "feedback_positive_rate",
+          "legendFormat": "feedback_positive_rate",
+          "refId": "A"
+        },
+        {
+          "expr": "rca_accuracy_estimate",
+          "legendFormat": "rca_accuracy_estimate",
+          "refId": "B"
+        },
+        {
+          "expr": "anomaly_precision_estimate",
+          "legendFormat": "anomaly_precision_estimate",
+          "refId": "C"
+        },
+        {
+          "expr": "action_success_rate",
+          "legendFormat": "action_success_rate",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "False positives & submissions",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 6 },
+      "targets": [
+        {
+          "expr": "false_positive_count",
+          "legendFormat": "false_positive_count",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(feedback_submissions_total[5m])) * 60",
+          "legendFormat": "submissions / min",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Thumbs by aspect (rate)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "targets": [
+        {
+          "expr": "sum by (aspect, vote) (rate(feedback_thumbs_total[10m]))",
+          "legendFormat": "{{aspect}} {{vote}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars", "fillOpacity": 40, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Detector anomalies emitted (context)",
+      "description": "From anomaly-detector exporter if scraped",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "targets": [
+        {
+          "expr": "sum(rate(detector_anomalies_emitted_total[5m]))",
+          "legendFormat": "anomalies/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(open_incidents)",
+          "legendFormat": "open_incidents",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(incidents_created_total[5m]))",
+          "legendFormat": "incidents_created/s",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 10 }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Decision Engine + Confidence + Engine QA",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "id": 20,
+      "collapsed": false
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Anomaly confidence (avg)",
+      "description": "anomaly_confidence_score from detector",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "avg(anomaly_confidence_score)",
+          "legendFormat": "confidence",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "green", "value": 85 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Context completeness (avg)",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 24 },
+      "targets": [
+        {
+          "expr": "avg(context_completeness)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.75 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Engine QA overall health",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "expr": "engine_qa_overall_health",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.75 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "area"
+      }
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Decision LLM calls (total)",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 24 },
+      "targets": [
+        {
+          "expr": "decision_engine_llm_calls_total",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Decision Engine decisions by action",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 },
+      "targets": [
+        {
+          "expr": "sum by (action) (rate(decision_engine_decisions_total[10m]))",
+          "legendFormat": "{{action}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars", "fillOpacity": 40, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "Engine QA meta-SLOs",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 },
+      "targets": [
+        {
+          "expr": "engine_qa_precision_estimate",
+          "legendFormat": "precision",
+          "refId": "A"
+        },
+        {
+          "expr": "engine_qa_false_positive_rate",
+          "legendFormat": "fp_rate",
+          "refId": "B"
+        },
+        {
+          "expr": "engine_qa_hallucination_rate",
+          "legendFormat": "hallucination",
+          "refId": "C"
+        },
+        {
+          "expr": "engine_qa_decision_correct_rate",
+          "legendFormat": "decision_ok",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["aiops", "feedback", "rca", "decision", "demo"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "AIOps Engine Health",
+  "uid": "aiops-engine-health",
+  "version": 1,
+  "weekStart": ""
+}

@@ -28,6 +28,15 @@ _state: dict[str, Any] = {
     "error_rate": float(os.getenv("ERROR_RATE", "0.01")),
     "base_latency_ms": float(os.getenv("BASE_LATENCY_MS", "80")),
     "extra_latency_ms": 0.0,
+    # none | db_pool | gateway_timeout | redis_cache_miss
+    "fault_mode": os.getenv("FAULT_MODE", "none"),
+}
+
+_FAULT_MESSAGES = {
+    "db_pool": "payment-service database connection pool exhaustion",
+    "gateway_timeout": "payment gateway timeout (injected)",
+    "redis_cache_miss": "redis cache miss — cold card-token lookup path",
+    "none": "payment gateway timeout (injected)",
 }
 
 
@@ -74,6 +83,10 @@ class ChaosConfig(BaseModel):
     error_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     base_latency_ms: float | None = Field(default=None, ge=0)
     extra_latency_ms: float | None = Field(default=None, ge=0)
+    fault_mode: str | None = Field(
+        default=None,
+        description="none|db_pool|gateway_timeout|redis_cache_miss",
+    )
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -94,7 +107,15 @@ def set_chaos(cfg: ChaosConfig) -> dict:
         _state["base_latency_ms"] = cfg.base_latency_ms
     if cfg.extra_latency_ms is not None:
         _state["extra_latency_ms"] = cfg.extra_latency_ms
-    logger.warning("chaos updated %s", _state)
+    if cfg.fault_mode is not None:
+        _state["fault_mode"] = cfg.fault_mode
+    logger.warning(
+        "chaos updated service=%s fault_mode=%s error_rate=%s extra_latency_ms=%s",
+        SERVICE_NAME,
+        _state.get("fault_mode"),
+        _state.get("error_rate"),
+        _state.get("extra_latency_ms"),
+    )
     return _state
 
 
@@ -112,7 +133,15 @@ async def pay(body: PayRequest) -> dict:
         req_counter.add(1, {**attrs, "status": "error"})
         err_counter.add(1, attrs)
         duration_hist.record(elapsed, {**attrs, "status": "error"})
-        raise HTTPException(status_code=502, detail="payment gateway timeout (injected)")
+        mode = str(_state.get("fault_mode") or "none")
+        detail = _FAULT_MESSAGES.get(mode, _FAULT_MESSAGES["none"])
+        logger.error(
+            "payment failure fault_mode=%s detail=%s order_id=%s",
+            mode,
+            detail,
+            body.order_id,
+        )
+        raise HTTPException(status_code=502, detail=detail)
 
     elapsed = (time.perf_counter() - start) * 1000
     req_counter.add(1, {**attrs, "status": "ok"})

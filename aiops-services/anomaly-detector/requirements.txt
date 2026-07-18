@@ -1,2 +1,19 @@
-# Local dev: pip install -r shared/requirements-base.txt
-# Docker installs shared/requirements-base.txt directly (see Dockerfile).
+# Anomaly detector — ML + statistical stack (on top of shared base).
+#
+# Install order in Docker:
+#   pip install -r shared/requirements-base.txt
+#   pip install -r requirements.txt
+
+# Time-series / stats
+numpy==2.1.3
+pandas==2.2.3
+# STL seasonal decomposition (used when seasonality strength is sufficient)
+statsmodels==0.14.4
+
+# Unsupervised anomaly detection
+scikit-learn==1.5.2
+joblib==1.4.2
+scipy==1.14.1
+
+# Prometheus client — anomaly_score / anomaly_confidence_score / context_completeness
+prometheus-client==0.21.1

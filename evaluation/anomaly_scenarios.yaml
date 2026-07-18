@@ -1,0 +1,80 @@
+# =============================================================================
+# Anomaly Detection evaluation labels (mini set)
+# =============================================================================
+#
+# Each scenario provides a short time series (values) for a metric.
+# label: anomaly | normal
+# The evaluator feeds values sequentially into HybridDetector (offline) and
+# checks whether the final point is flagged as is_anomaly.
+#
+# Precision = TP / (TP+FP), Recall = TP / (TP+FN), F1 = harmonic mean.
+# =============================================================================
+
+version: "1.0"
+dataset_name: aiops-anomaly-mini
+
+scenarios:
+  - scenario_id: ad-01-error-rate-spike
+    description: Clear error-rate level shift (true positive)
+    service: checkout-service
+    metric_name: http_error_rate
+    label: anomaly
+    # healthy baseline then spike
+    values: [0.01, 0.02, 0.015, 0.02, 0.01, 0.02, 0.015, 0.02, 0.01, 0.45]
+    absolute_threshold: 0.15
+
+  - scenario_id: ad-02-latency-spike
+    description: p95 latency jump (true positive)
+    service: payment-service
+    metric_name: http_latency_p95_seconds
+    label: anomaly
+    values: [0.05, 0.06, 0.05, 0.07, 0.06, 0.05, 0.06, 0.08, 0.05, 1.5]
+    absolute_threshold: 0.8
+
+  - scenario_id: ad-03-gradual-error-rise
+    description: Gradual error rise above threshold (true positive)
+    service: checkout-service
+    metric_name: http_error_rate
+    label: anomaly
+    values: [0.02, 0.03, 0.04, 0.05, 0.08, 0.1, 0.12, 0.18, 0.22, 0.3]
+    absolute_threshold: 0.15
+
+  - scenario_id: ad-04-normal-flat
+    description: Stable healthy series (true negative)
+    service: checkout-service
+    metric_name: http_error_rate
+    label: normal
+    values: [0.01, 0.02, 0.015, 0.01, 0.02, 0.015, 0.01, 0.02, 0.015, 0.01]
+    absolute_threshold: 0.15
+
+  - scenario_id: ad-05-normal-noise
+    description: Small noise under threshold (true negative / possible FP)
+    service: payment-service
+    metric_name: http_error_rate
+    label: normal
+    values: [0.01, 0.03, 0.02, 0.04, 0.02, 0.03, 0.01, 0.04, 0.02, 0.03]
+    absolute_threshold: 0.15
+
+  - scenario_id: ad-06-latency-normal
+    description: Normal latency band (true negative)
+    service: checkout-service
+    metric_name: http_latency_p95_seconds
+    label: normal
+    values: [0.04, 0.05, 0.06, 0.05, 0.04, 0.05, 0.06, 0.05, 0.04, 0.05]
+    absolute_threshold: 0.8
+
+  - scenario_id: ad-07-request-drop
+    description: Sudden RPS drop (true positive — traffic cliff)
+    service: checkout-service
+    metric_name: http_request_rate
+    label: anomaly
+    values: [20, 21, 19, 22, 20, 21, 20, 19, 20, 1.0]
+    absolute_threshold: 5.0
+
+  - scenario_id: ad-08-borderline-error
+    description: Error rate just under absolute threshold (labeled normal)
+    service: payment-service
+    metric_name: http_error_rate
+    label: normal
+    values: [0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.11, 0.12, 0.14]
+    absolute_threshold: 0.15

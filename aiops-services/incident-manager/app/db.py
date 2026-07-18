@@ -235,6 +235,17 @@ class IncidentRepository:
             ).fetchall()
         return {r["status"]: r["c"] for r in rows}
 
+    def count_open(self) -> int:
+        """Tickets still in flight (not resolved/closed/false_positive)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS c FROM incidents
+                WHERE status IN ('open', 'acknowledged', 'investigating', 'remediating')
+                """
+            ).fetchone()
+        return int(row["c"] if row else 0)
+
     @staticmethod
     def _row_to_incident(row: sqlite3.Row) -> Incident:
         return Incident(
@@ -261,11 +272,23 @@ class IncidentRepository:
 
 
 def incident_from_anomaly(anomaly) -> Incident:
-    """Map AnomalyEvent → Incident ticket."""
+    """Map AnomalyEvent → Incident ticket (anomaly_details nested in context)."""
     from aiops_shared.models import AnomalyEvent
 
     assert isinstance(anomaly, AnomalyEvent)
     title = f"[{anomaly.severity.value.upper()}] {anomaly.service_name}: {anomaly.metric_name}"
+    anomaly_details = {
+        "anomaly_id": anomaly.id,
+        "metric_name": anomaly.metric_name,
+        "metric_value": anomaly.metric_value,
+        "threshold": anomaly.threshold,
+        "detector": anomaly.detector,
+        "message": anomaly.message,
+        "labels": anomaly.labels,
+        "context": anomaly.context,
+        "detected_at": anomaly.detected_at.isoformat(),
+        "schema_version": anomaly.schema_version,
+    }
     return Incident(
         title=title,
         description=anomaly.message
@@ -282,5 +305,11 @@ def incident_from_anomaly(anomaly) -> Incident:
             "detector": anomaly.detector,
             "detected_at": anomaly.detected_at.isoformat(),
             "schema_version": anomaly.schema_version,
+            "anomaly_details": anomaly_details,
+            "occurrence_count": 1,
+            # Denormalize explainability for Incident UI without parsing method_details.
+            "explanation": anomaly.context.get("explanation") or anomaly.message,
+            "explainability": anomaly.context.get("explainability")
+            or {"summary": anomaly.message},
         },
     )

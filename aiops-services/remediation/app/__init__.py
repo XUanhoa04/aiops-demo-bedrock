@@ -1,1 +1,1 @@
-"""Day-2: remediation orchestrator — stub."""
+"""AIOps Remediation — risk-gated actions + Streamlit approval UI."""

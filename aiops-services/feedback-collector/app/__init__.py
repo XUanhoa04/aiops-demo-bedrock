@@ -1,1 +1,1 @@
-"""Day-2: human-in-the-loop feedback collector — stub."""
+"""AIOps Feedback Collector — on-call review loop + quality metrics."""

@@ -1,0 +1,5 @@
+# RCA engine — Bedrock + observability clients (on top of shared base).
+boto3==1.35.76
+botocore==1.35.76
+tenacity==9.0.0
+prometheus-client==0.21.1

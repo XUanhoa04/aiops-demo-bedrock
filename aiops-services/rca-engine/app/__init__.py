@@ -1,1 +1,1 @@
-"""Day-2: RCA engine (Amazon Bedrock) — stub."""
+"""AIOps RCA Engine — grounded Bedrock root-cause analysis."""

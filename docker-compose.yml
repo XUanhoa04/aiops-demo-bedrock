@@ -1,13 +1,12 @@
 # =============================================================================
 # AIOps Demo Bedrock — one-command production-like stack
 #
-# Usage:
-#   cp .env.example .env   # fill AWS keys when using Bedrock (Day-2)
+# Usage (one command — full pipeline):
+#   cp .env.example .env   # optional: AWS keys for Bedrock RCA
 #   docker compose up -d --build
 #
-# Production choices documented inline. This is a CV / workshop demo that
-# mirrors real AIOps patterns (detect → ticket → RCA → remediate → feedback)
-# without requiring a full K8s cluster.
+# Pipeline: detect → ticket → RCA (Bedrock/rules) → remediate → feedback
+# Production choices documented inline.
 # =============================================================================
 
 name: aiops-demo-bedrock
@@ -157,7 +156,9 @@ services:
       - aiops-net
 
   # ---------------------------------------------------------------------------
-  # AIOps: Anomaly Detector — polls Prometheus, scores anomalies, enqueues events
+  # AIOps: Anomaly Detector — hybrid EWMA/Z-score + IsolationForest
+  # Pulls PromQL from LGTM, exposes /metrics (anomaly_score, is_anomaly, …),
+  # notifies Redis queue + optional Incident Manager webhook.
   # ---------------------------------------------------------------------------
   aiops-anomaly-detector:
     build:
@@ -169,12 +170,38 @@ services:
       OTEL_SERVICE_NAME: aiops-anomaly-detector
       SERVICE_NAME: aiops-anomaly-detector
       PORT: "8001"
-      PROMETHEUS_URL: http://lgtm:9090
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://lgtm:9090}
+      LOKI_URL: ${LOKI_URL:-http://lgtm:3100}
+      TEMPO_URL: ${TEMPO_URL:-http://lgtm:3200}
+      DETECTION_INTERVAL: ${DETECTION_INTERVAL:-30}
+      ZSCORE_THRESHOLD: ${ZSCORE_THRESHOLD:-2.5}
+      EWMA_ALPHA: ${EWMA_ALPHA:-0.3}
+      WINDOW_SIZE: ${WINDOW_SIZE:-30}
+      MIN_SAMPLES: ${MIN_SAMPLES:-8}
+      ENABLE_STL: ${ENABLE_STL:-true}
+      STL_PERIOD: ${STL_PERIOD:-10}
+      STL_MIN_SEASONAL_STRENGTH: ${STL_MIN_SEASONAL_STRENGTH:-0.15}
+      IFOREST_CONTAMINATION: ${IFOREST_CONTAMINATION:-0.08}
+      HYBRID_VOTE: ${HYBRID_VOTE:-any}
+      ERROR_RATE_THRESHOLD: ${ERROR_RATE_THRESHOLD:-0.15}
+      LATENCY_P95_SECONDS_THRESHOLD: ${LATENCY_P95_SECONDS_THRESHOLD:-0.8}
+      WATCHED_SERVICES: ${WATCHED_SERVICES:-checkout-service,payment-service}
+      ENABLE_CONTEXT_GATHER: ${ENABLE_CONTEXT_GATHER:-true}
+      CONTEXT_WINDOW_MINUTES: ${CONTEXT_WINDOW_MINUTES:-10}
+      # Confidence engine weights (normalized at runtime) — metrics/traces/logs/events
+      CONFIDENCE_WEIGHT_METRICS: ${CONFIDENCE_WEIGHT_METRICS:-0.40}
+      CONFIDENCE_WEIGHT_TRACES: ${CONFIDENCE_WEIGHT_TRACES:-0.30}
+      CONFIDENCE_WEIGHT_LOGS: ${CONFIDENCE_WEIGHT_LOGS:-0.20}
+      CONFIDENCE_WEIGHT_EVENTS: ${CONFIDENCE_WEIGHT_EVENTS:-0.10}
+      MIN_CONFIDENCE_TO_NOTIFY: ${MIN_CONFIDENCE_TO_NOTIFY:-0}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       REDIS_QUEUE_ANOMALIES: ${REDIS_QUEUE_ANOMALIES:-aiops:anomalies}
-      ANOMALY_POLL_INTERVAL_SEC: ${ANOMALY_POLL_INTERVAL_SEC:-15}
-      ANOMALY_ERROR_RATE_THRESHOLD: ${ANOMALY_ERROR_RATE_THRESHOLD:-0.15}
-      ANOMALY_LATENCY_P95_MS: ${ANOMALY_LATENCY_P95_MS:-800}
+      REDIS_QUEUE_DECISIONS: ${REDIS_QUEUE_DECISIONS:-aiops:decisions}
+      ENABLE_DECISION_QUEUE: ${ENABLE_DECISION_QUEUE:-true}
+      INCIDENT_WEBHOOK_URL: ${INCIDENT_WEBHOOK_URL:-http://aiops-incident-manager:8002/incidents/from-anomaly}
+      ENABLE_REDIS_NOTIFY: ${ENABLE_REDIS_NOTIFY:-true}
+      ENABLE_WEBHOOK_NOTIFY: ${ENABLE_WEBHOOK_NOTIFY:-true}
+      ALERT_COOLDOWN_SEC: ${ALERT_COOLDOWN_SEC:-60}
     ports:
       - "8001:8001"
     depends_on:
@@ -186,8 +213,8 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 40s
+      retries: 12
+      start_period: 60s
     restart: unless-stopped
     logging: *default-logging
     networks:
@@ -210,11 +237,18 @@ services:
       REDIS_QUEUE_ANOMALIES: ${REDIS_QUEUE_ANOMALIES:-aiops:anomalies}
       REDIS_QUEUE_INCIDENTS: ${REDIS_QUEUE_INCIDENTS:-aiops:incidents}
       INCIDENT_DB_PATH: ${INCIDENT_DB_PATH:-/data/incidents.db}
-      # Bedrock reserved for Day-2 RCA enrichment (safe to leave dummy values Day-1)
+      # Wire to RCA: async webhook + Redis fan-out (aiops:incidents)
+      RCA_ENGINE_URL: ${RCA_ENGINE_URL:-http://aiops-rca-engine:8003}
+      DECISION_ENGINE_URL: ${DECISION_ENGINE_URL:-http://aiops-decision-engine:8006}
+      ENABLE_DECISION_ENGINE: ${ENABLE_DECISION_ENGINE:-true}
+      # Browser-facing Grafana for one-click "View Trace" (not Docker DNS)
+      GRAFANA_PUBLIC_URL: ${GRAFANA_PUBLIC_URL:-http://localhost:3000}
+      TEMPO_DATASOURCE_UID: ${TEMPO_DATASOURCE_UID:-tempo}
+      LOKI_DATASOURCE_UID: ${LOKI_DATASOURCE_UID:-loki}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
-      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-anthropic.claude-3-5-sonnet-20240620-v1:0}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-amazon.nova-lite-v1:0}
     ports:
       - "8002:8002"
     volumes:
@@ -237,95 +271,316 @@ services:
       - aiops-net
 
   # ---------------------------------------------------------------------------
-  # Day-2 stubs (built & healthy, business logic intentionally minimal)
-  # Uncomment profiles or keep always-on so `docker compose up` shows full map.
+  # RCA Engine — grounded Prom/Loki/Tempo → Bedrock Converse → remediation fan-out
   # ---------------------------------------------------------------------------
   aiops-rca-engine:
     build:
       context: .
       dockerfile: aiops-services/rca-engine/Dockerfile
     container_name: aiops-rca-engine
-    profiles: ["day2"]
     environment:
       <<: *otel-env
       OTEL_SERVICE_NAME: aiops-rca-engine
+      SERVICE_NAME: aiops-rca-engine
       PORT: "8003"
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
-      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-anthropic.claude-3-5-sonnet-20240620-v1:0}
-      INCIDENT_MANAGER_URL: http://aiops-incident-manager:8002
-      PROMETHEUS_URL: http://lgtm:9090
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-amazon.nova-lite-v1:0}
+      BEDROCK_TEMPERATURE: ${BEDROCK_TEMPERATURE:-0.15}
+      BEDROCK_MAX_TOKENS: ${BEDROCK_MAX_TOKENS:-2048}
+      BEDROCK_MAX_RETRIES: ${BEDROCK_MAX_RETRIES:-3}
+      MIN_BEDROCK_CONFIDENCE: ${MIN_BEDROCK_CONFIDENCE:-40}
+      TEMPO_DATASOURCE_NAME: ${TEMPO_DATASOURCE_NAME:-Tempo}
+      LOKI_DATASOURCE_NAME: ${LOKI_DATASOURCE_NAME:-Loki}
+      # Without AWS keys, RCA falls back to rule-based automatically
+      FORCE_RULE_BASED: ${FORCE_RULE_BASED:-false}
+      INCIDENT_MANAGER_URL: ${INCIDENT_MANAGER_URL:-http://aiops-incident-manager:8002}
+      REMEDIATION_URL: ${REMEDIATION_URL:-http://aiops-remediation:8004}
+      ENABLE_REMEDIATION_FANOUT: ${ENABLE_REMEDIATION_FANOUT:-true}
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://lgtm:9090}
+      LOKI_URL: ${LOKI_URL:-http://lgtm:3100}
+      TEMPO_URL: ${TEMPO_URL:-http://lgtm:3200}
+      EVIDENCE_WINDOW_MINUTES: ${EVIDENCE_WINDOW_MINUTES:-15}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_QUEUE_INCIDENTS: ${REDIS_QUEUE_INCIDENTS:-aiops:incidents}
+      ENABLE_REDIS_POLL: ${ENABLE_REDIS_POLL:-true}
+      GRAFANA_PUBLIC_URL: ${GRAFANA_PUBLIC_URL:-http://localhost:3000}
+      TEMPO_DATASOURCE_UID: ${TEMPO_DATASOURCE_UID:-tempo}
+      LOKI_DATASOURCE_UID: ${LOKI_DATASOURCE_UID:-loki}
     ports:
       - "8003:8003"
     depends_on:
       aiops-incident-manager:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      lgtm:
+        condition: service_started
+      # Remediation may start slightly later; fan-out is best-effort with retries on next incident
+      aiops-remediation:
+        condition: service_started
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=3)"]
       interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 8
+      start_period: 30s
     restart: unless-stopped
     logging: *default-logging
     networks:
       - aiops-net
 
+  # ---------------------------------------------------------------------------
+  # Remediation — risk-gated actions + Streamlit approval UI (:8501)
+  # ---------------------------------------------------------------------------
   aiops-remediation:
     build:
       context: .
       dockerfile: aiops-services/remediation/Dockerfile
     container_name: aiops-remediation
-    profiles: ["day2"]
     environment:
       <<: *otel-env
       OTEL_SERVICE_NAME: aiops-remediation
+      SERVICE_NAME: aiops-remediation
       PORT: "8004"
-      CHECKOUT_URL: http://checkout-service:8080
-      PAYMENT_URL: http://payment-service:8081
-      INCIDENT_MANAGER_URL: http://aiops-incident-manager:8002
+      STREAMLIT_PORT: "8501"
+      REMEDIATION_API_URL: http://127.0.0.1:8004
+      CHECKOUT_URL: ${CHECKOUT_URL:-http://checkout-service:8080}
+      PAYMENT_URL: ${PAYMENT_URL:-http://payment-service:8081}
+      INCIDENT_MANAGER_URL: ${INCIDENT_MANAGER_URL:-http://aiops-incident-manager:8002}
+      RCA_ENGINE_URL: ${RCA_ENGINE_URL:-http://aiops-rca-engine:8003}
+      REMEDIATION_DB_PATH: ${REMEDIATION_DB_PATH:-/data/remediation.db}
+      AUTO_EXECUTE_LOW_RISK: ${AUTO_EXECUTE_LOW_RISK:-true}
+      SIMULATE_ONLY: ${SIMULATE_ONLY:-false}
+      DOCKER_HOST: ${DOCKER_HOST:-}
+      DEFAULT_EXECUTOR: ${DEFAULT_EXECUTOR:-remediation-bot}
     ports:
       - "8004:8004"
+      - "8501:8501"
+    volumes:
+      - remediation-data:/data
+      # Uncomment for real `docker restart` from inside the container:
+      # - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       aiops-incident-manager:
         condition: service_healthy
+      checkout-service:
+        condition: service_started
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health', timeout=3)"]
       interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 8
+      start_period: 40s
     restart: unless-stopped
     logging: *default-logging
     networks:
       - aiops-net
 
+  # ---------------------------------------------------------------------------
+  # Decision Engine — confidence-gated routing (auto-remediate / RCA / escalate)
+  # Port 8006. See aiops-services/decision-engine/README.md for decision table.
+  # ---------------------------------------------------------------------------
+  aiops-decision-engine:
+    build:
+      context: .
+      dockerfile: aiops-services/decision-engine/Dockerfile
+    container_name: aiops-decision-engine
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: aiops-decision-engine
+      SERVICE_NAME: aiops-decision-engine
+      PORT: "8006"
+      ANOMALY_DETECTOR_URL: ${ANOMALY_DETECTOR_URL:-http://aiops-anomaly-detector:8001}
+      INCIDENT_MANAGER_URL: ${INCIDENT_MANAGER_URL:-http://aiops-incident-manager:8002}
+      RCA_ENGINE_URL: ${RCA_ENGINE_URL:-http://aiops-rca-engine:8003}
+      REMEDIATION_URL: ${REMEDIATION_URL:-http://aiops-remediation:8004}
+      CONFIDENCE_HIGH: ${CONFIDENCE_HIGH:-85}
+      CONFIDENCE_MEDIUM: ${CONFIDENCE_MEDIUM:-60}
+      MAX_ITERATIONS: ${MAX_ITERATIONS:-3}
+      CRITICAL_MISSING_CONTEXT: ${CRITICAL_MISSING_CONTEXT:-sufficient_metrics}
+      ENABLE_LLM: ${DECISION_ENABLE_LLM:-true}
+      ENABLE_AUTO_REMEDIATION: ${ENABLE_AUTO_REMEDIATION:-true}
+      # Gated: propose only by default — never force-execute strong actions
+      AUTO_EXECUTE_GATED_LOW_RISK: ${AUTO_EXECUTE_GATED_LOW_RISK:-false}
+      MIN_LLM_CONFIDENCE: ${MIN_LLM_CONFIDENCE:-40}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_QUEUE_DECISIONS: ${REDIS_QUEUE_DECISIONS:-aiops:decisions}
+      ENABLE_REDIS_CONSUMER: ${DECISION_ENABLE_REDIS_CONSUMER:-true}
+    ports:
+      - "8006:8006"
+    depends_on:
+      redis:
+        condition: service_healthy
+      aiops-anomaly-detector:
+        condition: service_healthy
+      aiops-incident-manager:
+        condition: service_healthy
+      aiops-rca-engine:
+        condition: service_started
+      aiops-remediation:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8006/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  # ---------------------------------------------------------------------------
+  # Feedback Collector — on-call thumbs + quality metrics + Streamlit (:8502)
+  # ---------------------------------------------------------------------------
   aiops-feedback-collector:
     build:
       context: .
       dockerfile: aiops-services/feedback-collector/Dockerfile
     container_name: aiops-feedback-collector
-    profiles: ["day2"]
     environment:
       <<: *otel-env
       OTEL_SERVICE_NAME: aiops-feedback-collector
+      SERVICE_NAME: aiops-feedback-collector
       PORT: "8005"
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      INCIDENT_MANAGER_URL: http://aiops-incident-manager:8002
+      STREAMLIT_PORT: "8502"
+      FEEDBACK_API_URL: http://127.0.0.1:8005
+      INCIDENT_MANAGER_URL: ${INCIDENT_MANAGER_URL:-http://aiops-incident-manager:8002}
+      REMEDIATION_URL: ${REMEDIATION_URL:-http://aiops-remediation:8004}
+      ANOMALY_DETECTOR_URL: ${ANOMALY_DETECTOR_URL:-http://aiops-anomaly-detector:8001}
+      FEEDBACK_DB_PATH: ${FEEDBACK_DB_PATH:-/data/feedback.db}
+      SYNC_INCIDENT_MANAGER: ${SYNC_INCIDENT_MANAGER:-true}
+      CURRENT_ZSCORE_THRESHOLD: ${ZSCORE_THRESHOLD:-2.5}
+      CURRENT_ERROR_RATE_THRESHOLD: ${ERROR_RATE_THRESHOLD:-0.15}
+      FP_RATE_WARN: ${FP_RATE_WARN:-0.25}
+      MIN_SAMPLES_FOR_TUNING: ${MIN_SAMPLES_FOR_TUNING:-5}
+      DEFAULT_REVIEWER: ${DEFAULT_REVIEWER:-oncall}
     ports:
       - "8005:8005"
+      - "8502:8502"
+    volumes:
+      - feedback-data:/data
     depends_on:
-      redis:
-        condition: service_healthy
       aiops-incident-manager:
         condition: service_healthy
+      aiops-remediation:
+        condition: service_started
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/health', timeout=3)"]
       interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 8
+      start_period: 40s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  # ---------------------------------------------------------------------------
+  # Engine QA — supervise the supervisors (meta quality of engine + LLM)
+  # API :8007 · Streamlit review UI :8503
+  # ---------------------------------------------------------------------------
+  aiops-engine-qa:
+    build:
+      context: .
+      dockerfile: aiops-services/engine-qa/Dockerfile
+    container_name: aiops-engine-qa
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: aiops-engine-qa
+      SERVICE_NAME: aiops-engine-qa
+      PORT: "8007"
+      STREAMLIT_PORT: "8503"
+      ENGINE_QA_API_URL: http://127.0.0.1:8007
+      INCIDENT_MANAGER_URL: ${INCIDENT_MANAGER_URL:-http://aiops-incident-manager:8002}
+      ANOMALY_DETECTOR_URL: ${ANOMALY_DETECTOR_URL:-http://aiops-anomaly-detector:8001}
+      DECISION_ENGINE_URL: ${DECISION_ENGINE_URL:-http://aiops-decision-engine:8006}
+      RCA_ENGINE_URL: ${RCA_ENGINE_URL:-http://aiops-rca-engine:8003}
+      FEEDBACK_URL: ${FEEDBACK_URL:-http://aiops-feedback-collector:8005}
+      REMEDIATION_URL: ${REMEDIATION_URL:-http://aiops-remediation:8004}
+      QA_DB_PATH: ${QA_DB_PATH:-/data/engine_qa.db}
+      SYNC_FEEDBACK_COLLECTOR: ${SYNC_FEEDBACK_COLLECTOR:-true}
+      SYNC_INCIDENT_MANAGER: ${SYNC_INCIDENT_MANAGER:-true}
+      CURRENT_ZSCORE_THRESHOLD: ${ZSCORE_THRESHOLD:-2.5}
+      CURRENT_ERROR_RATE_THRESHOLD: ${ERROR_RATE_THRESHOLD:-0.15}
+      CURRENT_CONFIDENCE_WEIGHT_METRICS: ${CONFIDENCE_WEIGHT_METRICS:-0.40}
+      CURRENT_CONFIDENCE_WEIGHT_TRACES: ${CONFIDENCE_WEIGHT_TRACES:-0.30}
+      CURRENT_CONFIDENCE_WEIGHT_LOGS: ${CONFIDENCE_WEIGHT_LOGS:-0.20}
+      CURRENT_CONFIDENCE_WEIGHT_EVENTS: ${CONFIDENCE_WEIGHT_EVENTS:-0.10}
+      CURRENT_CONFIDENCE_HIGH: ${CONFIDENCE_HIGH:-85}
+      CURRENT_CONFIDENCE_MEDIUM: ${CONFIDENCE_MEDIUM:-60}
+      MIN_SAMPLES_FOR_TUNING: ${MIN_SAMPLES_FOR_TUNING:-5}
+      FP_RATE_WARN: ${FP_RATE_WARN:-0.25}
+      HALLUCINATION_RATE_WARN: ${HALLUCINATION_RATE_WARN:-0.20}
+      DEFAULT_REVIEWER: ${DEFAULT_REVIEWER:-oncall-sre}
+    ports:
+      - "8007:8007"
+      - "8503:8503"
+    volumes:
+      - engine-qa-data:/data
+    depends_on:
+      aiops-incident-manager:
+        condition: service_healthy
+      aiops-feedback-collector:
+        condition: service_started
+      aiops-decision-engine:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8007/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 45s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  # ---------------------------------------------------------------------------
+  # AIOps Console — unified Streamlit operator UI (pipeline workbench)
+  # Port 8500: Incidents + Trace/Logs/RCA/Feedback + AIOps Health
+  # ---------------------------------------------------------------------------
+  aiops-console:
+    build:
+      context: .
+      dockerfile: aiops-services/aiops-console/Dockerfile
+    container_name: aiops-console
+    environment:
+      INCIDENT_MANAGER_URL: ${INCIDENT_MANAGER_URL:-http://aiops-incident-manager:8002}
+      RCA_ENGINE_URL: ${RCA_ENGINE_URL:-http://aiops-rca-engine:8003}
+      REMEDIATION_URL: ${REMEDIATION_URL:-http://aiops-remediation:8004}
+      FEEDBACK_URL: ${FEEDBACK_URL:-http://aiops-feedback-collector:8005}
+      ANOMALY_DETECTOR_URL: ${ANOMALY_DETECTOR_URL:-http://aiops-anomaly-detector:8001}
+      DECISION_ENGINE_URL: ${DECISION_ENGINE_URL:-http://aiops-decision-engine:8006}
+      ENGINE_QA_URL: ${ENGINE_QA_URL:-http://aiops-engine-qa:8007}
+      DEFAULT_REVIEWER: ${DEFAULT_REVIEWER:-oncall}
+      HTTP_TIMEOUT_SEC: ${HTTP_TIMEOUT_SEC:-25}
+    ports:
+      - "8500:8500"
+    depends_on:
+      aiops-incident-manager:
+        condition: service_healthy
+      aiops-feedback-collector:
+        condition: service_started
+      aiops-remediation:
+        condition: service_started
+      aiops-rca-engine:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8500/', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 45s
     restart: unless-stopped
     logging: *default-logging
     networks:
@@ -341,3 +596,9 @@ volumes:
     name: aiops-redis-data
   incident-data:
     name: aiops-incident-data
+  remediation-data:
+    name: aiops-remediation-data
+  feedback-data:
+    name: aiops-feedback-data
+  engine-qa-data:
+    name: aiops-engine-qa-data

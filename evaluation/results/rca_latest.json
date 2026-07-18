@@ -1,0 +1,163 @@
+{
+  "generated_at": "2026-07-18T12:39:18.862500+00:00",
+  "mode": "offline",
+  "dataset": "D:\\project\\aiops-demo-bedrock\\evaluation\\rca_scenarios.yaml",
+  "aggregate": {
+    "n": 12,
+    "correct": 12,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "mean_jaccard": 0.5272,
+    "mean_keyword_rate": 0.8056,
+    "mean_iterations": 1.0
+  },
+  "rows": [
+    {
+      "scenario_id": "rca-01-payment-db-pool",
+      "ground_truth": "payment-service database connection pool exhaustion",
+      "predicted": "elevated error rate on payment-service (http_error_rate=0.42); payment-service database connection pool exhaustion; slow traces observed (~1800ms)",
+      "correct": true,
+      "jaccard": 0.3333,
+      "keyword_rate": 1.0,
+      "confidence": 70.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-02-checkout-db-pool",
+      "ground_truth": "checkout-service database connection pool exhaustion",
+      "predicted": "elevated error rate on checkout-service (http_error_rate=0.55); checkout-service database connection pool exhaustion; slow traces observed (~900ms)",
+      "correct": true,
+      "jaccard": 0.3333,
+      "keyword_rate": 0.75,
+      "confidence": 70.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-03-payment-gateway-timeout",
+      "ground_truth": "payment gateway timeout / dependency failure",
+      "predicted": "payment gateway timeout / dependency failure; slow traces observed (~2400ms)",
+      "correct": true,
+      "jaccard": 0.5556,
+      "keyword_rate": 1.0,
+      "confidence": 67.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-04-checkout-cache-miss",
+      "ground_truth": "checkout-service high latency due to cache miss / cold redis keyspace",
+      "predicted": "checkout-service high latency due to cache miss / cold redis keyspace; slow traces observed (~1600ms)",
+      "correct": true,
+      "jaccard": 0.7143,
+      "keyword_rate": 1.0,
+      "confidence": 65.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-05-payment-redis-cache",
+      "ground_truth": "payment-service high latency due to cache miss / cold redis keyspace",
+      "predicted": "payment-service high latency due to cache miss / cold redis keyspace; slow traces observed (~1300ms)",
+      "correct": true,
+      "jaccard": 0.7143,
+      "keyword_rate": 1.0,
+      "confidence": 65.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-06-checkout-cpu-throttle",
+      "ground_truth": "checkout-service worker/thread pool saturation or CPU throttle",
+      "predicted": "checkout-service worker/thread pool saturation or CPU throttle; slow traces observed (~1100ms)",
+      "correct": true,
+      "jaccard": 0.6667,
+      "keyword_rate": 1.0,
+      "confidence": 60.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-07-cascade-payment-to-checkout",
+      "ground_truth": "payment-service database connection pool exhaustion",
+      "predicted": "elevated error rate on payment-service (http_error_rate=0.5); payment-service database connection pool exhaustion; slow traces observed (~2000ms)",
+      "correct": true,
+      "jaccard": 0.3571,
+      "keyword_rate": 0.6667,
+      "confidence": 70.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-08-traffic-spike-only",
+      "ground_truth": "normal traffic spike without application fault / insufficient evidence",
+      "predicted": "Insufficient evidence: cannot pin root cause for checkout-service; severity=high",
+      "correct": true,
+      "jaccard": 0.125,
+      "keyword_rate": 0.25,
+      "confidence": 30.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-09-payment-high-error-generic",
+      "ground_truth": "elevated error rate on payment-service / payment gateway timeout",
+      "predicted": "elevated error rate on payment-service (http_error_rate=0.48); payment gateway timeout / dependency failure; slow traces observed (~900ms)",
+      "correct": true,
+      "jaccard": 0.5,
+      "keyword_rate": 1.0,
+      "confidence": 70.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-10-checkout-dependency-timeout",
+      "ground_truth": "payment gateway timeout / dependency failure",
+      "predicted": "elevated error rate on checkout-service (http_error_rate=0.38); payment gateway timeout / dependency failure; slow traces observed (~2100ms)",
+      "correct": true,
+      "jaccard": 0.3125,
+      "keyword_rate": 0.3333,
+      "confidence": 70.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-11-partial-evidence-pool",
+      "ground_truth": "payment-service database connection pool exhaustion",
+      "predicted": "payment-service database connection pool exhaustion",
+      "correct": true,
+      "jaccard": 1.0,
+      "keyword_rate": 0.6667,
+      "confidence": 65.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-12-noisy-logs-latency",
+      "ground_truth": "checkout-service high latency due to cache miss / cold redis keyspace",
+      "predicted": "checkout-service high latency due to cache miss / cold redis keyspace; slow traces observed (~1900ms)",
+      "correct": true,
+      "jaccard": 0.7143,
+      "keyword_rate": 1.0,
+      "confidence": 65.0,
+      "mode": "rule_based",
+      "iterations": 1,
+      "notes": ""
+    }
+  ],
+  "table": "scenario_id                        | ok | jac  | kw   | iter | mode       | predicted                               \n-----------------------------------+----+------+------+------+------------+-----------------------------------------\nrca-01-payment-db-pool             | Y  | 0.33 | 1.00 | 1    | rule_based | elevated error rate on payment-service (\nrca-02-checkout-db-pool            | Y  | 0.33 | 0.75 | 1    | rule_based | elevated error rate on checkout-service \nrca-03-payment-gateway-timeout     | Y  | 0.56 | 1.00 | 1    | rule_based | payment gateway timeout / dependency fai\nrca-04-checkout-cache-miss         | Y  | 0.71 | 1.00 | 1    | rule_based | checkout-service high latency due to cac\nrca-05-payment-redis-cache         | Y  | 0.71 | 1.00 | 1    | rule_based | payment-service high latency due to cach\nrca-06-checkout-cpu-throttle       | Y  | 0.67 | 1.00 | 1    | rule_based | checkout-service worker/thread pool satu\nrca-07-cascade-payment-to-checkout | Y  | 0.36 | 0.67 | 1    | rule_based | elevated error rate on payment-service (\nrca-08-traffic-spike-only          | Y  | 0.12 | 0.25 | 1    | rule_based | Insufficient evidence: cannot pin root c\nrca-09-payment-high-error-generic  | Y  | 0.50 | 1.00 | 1    | rule_based | elevated error rate on payment-service (\nrca-10-checkout-dependency-timeout | Y  | 0.31 | 0.33 | 1    | rule_based | elevated error rate on checkout-service \nrca-11-partial-evidence-pool       | Y  | 1.00 | 0.67 | 1    | rule_based | payment-service database connection pool\nrca-12-noisy-logs-latency          | Y  | 0.71 | 1.00 | 1    | rule_based | checkout-service high latency due to cac"
+}

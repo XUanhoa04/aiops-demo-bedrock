@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
 """
-End-to-end demo flow (no Bedrock required for Day-1):
+Legacy quick demo (anomaly → incident). Prefer scripts/demo_e2e.py for full pipeline.
 
-1. Inject chaos (high error rate on checkout)
-2. Optionally fire a manual anomaly (fast path for live talks)
-3. Wait for incident-manager to open a ticket
-4. Print Grafana / API links
-
-Usage:
   python scripts/demo_flow.py
   python scripts/demo_flow.py --manual-only
+  python scripts/demo_flow.py --full   # delegates to generate_incident --full
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 
 def http_json(method: str, url: str, body: dict | None = None) -> dict | list:
@@ -30,7 +27,7 @@ def http_json(method: str, url: str, body: dict | None = None) -> dict | list:
         headers={"Content-Type": "application/json"},
         method=method,
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=15) as resp:
         raw = resp.read().decode()
         return json.loads(raw) if raw else {}
 
@@ -41,10 +38,16 @@ def main() -> int:
     p.add_argument("--detector", default="http://localhost:8001")
     p.add_argument("--incidents", default="http://localhost:8002")
     p.add_argument("--manual-only", action="store_true")
-    p.add_argument("--wait", type=int, default=20)
+    p.add_argument("--full", action="store_true", help="Full pipeline via generate_incident.py")
+    p.add_argument("--wait", type=int, default=25)
     args = p.parse_args()
 
-    print("== AIOps demo flow ==")
+    if args.full:
+        script = Path(__file__).with_name("generate_incident.py")
+        return subprocess.call([sys.executable, str(script), "--full"])
+
+    print("== AIOps demo flow (quick) ==")
+    print("Tip: use python scripts/demo_e2e.py for RCA + remediation + feedback")
 
     if not args.manual_only:
         print("[1] chaos: checkout error_rate=0.45")
@@ -56,8 +59,8 @@ def main() -> int:
             )
         )
 
-    print("[2] manual anomaly inject (guarantees a ticket within seconds)")
-    anomaly = http_json(
+    print("[2] manual anomaly inject")
+    detect_resp = http_json(
         "POST",
         f"{args.detector}/detect",
         {
@@ -67,7 +70,10 @@ def main() -> int:
             "threshold": 0.15,
         },
     )
-    print("  anomaly_id=", anomaly.get("id"))
+    anomaly = detect_resp.get("event") if isinstance(detect_resp, dict) else detect_resp
+    if not isinstance(anomaly, dict):
+        anomaly = detect_resp if isinstance(detect_resp, dict) else {}
+    print("  anomaly_id=", anomaly.get("id") or detect_resp.get("id"))
 
     print(f"[3] wait up to {args.wait}s for incident...")
     deadline = time.time() + args.wait
@@ -91,9 +97,10 @@ def main() -> int:
     print()
     print("Links:")
     print("  Grafana:           http://localhost:3000")
-    print("  Anomaly detector:  http://localhost:8001/docs")
-    print("  Incident manager:  http://localhost:8002/docs")
-    print("  Incidents API:     http://localhost:8002/incidents")
+    print("  Incident manager:  http://localhost:8002/")
+    print("  Remediation UI:    http://localhost:8501")
+    print("  Feedback UI:       http://localhost:8502")
+    print("  RCA:               http://localhost:8003/docs")
     return 0
 
 

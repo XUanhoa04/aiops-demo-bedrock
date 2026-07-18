@@ -1,64 +1,316 @@
 # aiops-demo-bedrock
 
-**Production-like AIOps demo** for CV / workshops: detect → ticket → (Day-2) RCA on Amazon Bedrock → remediate → human feedback.
+[![CI](https://github.com/XUanhoa04/aiops-demo-bedrock/actions/workflows/ci.yml/badge.svg)](https://github.com/XUanhoa04/aiops-demo-bedrock/actions/workflows/ci.yml)
 
-One command:
+**Production-*like* AIOps closed-loop demo** for senior SRE / Platform / AIOps interviews  
+(honest trade-offs in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
+
+> Observability (OTel + Grafana LGTM) → **Explainable** hybrid anomaly detection →  
+> Multi-signal **confidence** → **Decision Engine** (auto / RCA / escalate) →  
+> **Grounded** Bedrock RCA → **Risk-gated** remediation → Feedback + **Engine QA**.
 
 ```bash
-cp .env.example .env
+cp .env.example .env          # optional AWS keys for Bedrock
 docker compose up -d --build
+bash scripts/wait_for_stack.sh
+python scripts/demo_one_shot.py   # recommended one-shot path
+# Open: http://localhost:8500  ·  Grafana http://localhost:3000
 ```
+
+Without AWS keys, RCA still runs via **rule-based fallback** (safety over silence).  
+Offline quality gates (no Docker required for unit/eval): `bash scripts/run-evaluation.sh` or `make ci`.
+
+---
+
+## Why this project (for hiring managers)
+
+| Senior bar | Implementation |
+|------------|----------------|
+| **Safety** | High-risk restart/scale require approval; Bedrock failures fall back to rules |
+| **Explainability** | Detector emits sigma/EWMA sentences, not only opaque scores |
+| **Grounded GenAI** | RCA only reasons over Prom/Loki/Tempo evidence + strict JSON schema |
+| **Time-to-evidence** | Incident UI **🔍 Xem Trace** deep-links Grafana Tempo Explore |
+| **Closed loop** | Feedback metrics (`feedback_positive_rate`, `rca_accuracy_estimate`, `false_positive_count`) |
+| **Operate-ability** | One compose file, healthchecks, non-root images, log rotation |
+| **Measurable quality** | Offline anomaly F1 + RCA accuracy + **baseline beat** in CI |
+
+### Production trade-offs (not oversold)
+
+This is a **laptop-friendly demo**, not a multi-tenant SaaS. Deliberately simplified:
+
+| Demo | Production would use |
+|------|----------------------|
+| Redis LIST queues | Kafka / SQS / Streams + DLQ |
+| SQLite tickets | Postgres + migrations |
+| In-memory detector windows | Feature store / stream processor |
+| Open localhost APIs | SSO + RBAC on approve/execute |
+
+Full diagram & decision rationale: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
+
+---
 
 ## Architecture
 
-```text
-[checkout] ──► [payment]          demo apps (metrics + traces)
-     │               │
-     └──── OTLP ─────┴──► [grafana/otel-lgtm]  Prometheus/Loki/Tempo/Grafana
-                                ▲
-                                │ PromQL
-                    [anomaly-detector] ──Redis queue──► [incident-manager/SQLite]
-                                                              │
-                         Day-2 (profile):  RCA(Bedrock) · remediation · feedback
+```mermaid
+flowchart TB
+  subgraph Customer_path["User request path"]
+    U[Client] --> CO[checkout-service]
+    CO --> PAY[payment-service]
+  end
+
+  subgraph Obs["Observability backbone — grafana/otel-lgtm"]
+    OTLP[OTLP :4317/4318]
+    PROM[Prometheus :9090]
+    LOKI[Loki :3100]
+    TEMPO[Tempo :3200]
+    GRAF[Grafana :3000]
+  end
+
+  CO & PAY -->|metrics traces logs| OTLP
+  OTLP --> PROM & LOKI & TEMPO
+  GRAF --> PROM & LOKI & TEMPO
+
+  subgraph AIOps_loop["AIOps closed loop"]
+    AD[1 Anomaly Detector<br/>hybrid + confidence]
+    IM[2 Incident Manager<br/>correlate + console]
+    DE[Decision Engine<br/>policy bands]
+    RCA[3 RCA Engine<br/>grounded Bedrock]
+    REM[4 Remediation<br/>gated actions]
+    FB[5 Feedback + Engine QA<br/>meta-SLOs]
+  end
+
+  AD -->|PromQL| PROM
+  AD -->|Redis + webhook| IM
+  IM --> DE
+  DE -->|medium band| RCA
+  DE -->|high + pattern| REM
+  IM -->|async webhook + Redis| RCA
+  RCA -->|evidence| PROM & LOKI & TEMPO
+  RCA -->|PATCH root_cause + trace links| IM
+  RCA -->|propose| REM
+  REM -->|chaos reset / simulate| CO
+  FB -->|human_feedback / FP| IM
+  IM -->|🔍 deep-link| GRAF
 ```
 
-| Service | Port | Role |
-|---------|------|------|
-| Grafana LGTM | 3000, 4317, 4318, 9090, 3100, 3200 | Observability backbone |
-| checkout-service | 8080 | Demo traffic + chaos |
-| payment-service | 8081 | Downstream dependency |
-| Redis | 6379 | Anomaly / incident queues |
-| aiops-anomaly-detector | 8001 | Threshold + z-score → Redis |
-| aiops-incident-manager | 8002 | Tickets in SQLite |
-| rca / remediation / feedback | 8003–8005 | Day-2 (`--profile day2`) |
+### Pipeline stages
 
-## Quick demo
+1. **Observability** — Apps export OTLP to LGTM (metrics + traces; logs when available).
+2. **Anomaly detection** — Hybrid EWMA/z-score/STL + IsolationForest; multi-signal confidence 0–100.
+3. **Correlation & incident** — Same service+metric window → one ticket (noise control).
+4. **Decision Engine** — conf≥85 + known pattern → gated remediate; 60–85 → RCA/LLM; &lt;60 → escalate.
+5. **RCA** — Evidence pack only; Bedrock `converse()` + JSON schema; rule fallback.
+6. **Remediation** — Low-risk auto (e.g. clear chaos); high-risk (restart/scale) needs approval.
+7. **Feedback / Engine QA** — Thumbs + precision/FP/hallucination gauges + tuning advice.
+
+---
+
+## Trace experience (standout feature)
+
+From **http://localhost:8002/** open an incident → **🔍 Xem Trace**:
+
+- If RCA found Tempo traces → opens Grafana Explore on the **primary slow/error trace id**.
+- Else → service-scoped TraceQL (`status=error`) so the operator still lands in context.
+- Also: **Logs** deep-link (Loki) + raw JSON for automation.
+
+API for bots/Slack:
 
 ```bash
-# wait for health (or open http://localhost:8002/health)
-# Windows: use `py -3` if `python` is not on PATH
-python scripts/demo_flow.py
+curl -s http://localhost:8002/incidents/<id>/observability-links | jq .
+```
 
-# generate load
-python scripts/load_test.py --rps 15 --duration 60
+**Why deep-link?** On-call time is the scarce resource. Copy-pasting trace IDs is swivel-chair toil and error-prone.
 
-# inject failures
-python scripts/chaos.py --service checkout --error-rate 0.5
+---
+
+## Explainability (anomaly + confidence)
+
+Example detector message (stored on the ticket):
+
+> `[ewma_zscore, threshold] error rate cao hơn 3.21 sigma so với EWMA baseline 0.03 (α=0.3, …) | error rate=0.45 breached absolute threshold 0.15`
+
+Design choice: **hybrid** — EWMA/Z-score (+ STL when seasonality is strong) for auditability; IsolationForest for multivariate joint outliers; absolute thresholds for cold-start safety.
+
+**Confidence Scoring Engine** (0–100) weights multi-signal context for the Decision Engine:
+
+| Signal  | Default weight | Why |
+|---------|----------------|-----|
+| Metrics | 40% | Detector is metric-driven; always present if we fired |
+| Traces  | 30% | Best causal link for RCA (which span failed) |
+| Logs    | 20% | Message-level corroboration |
+| Events  | 10% | Deploy/chaos/change correlation (sparse) |
+
+Missing `trace_id` / logs / metrics subtracts points. Prometheus exposes `anomaly_confidence_score` and `context_completeness`. Full object: `GET /decisions`, `POST /detect` → `decision`.
+
+### Decision Engine (port 8006)
+
+| Confidence / condition | Action |
+|------------------------|--------|
+| ≥ 85 + known pattern | **Auto-remediate (gated)** — log + propose, no force-execute |
+| 60–85 | **Bedrock RCA** (limited) + suggestions for on-call |
+| < 60 or critical missing context | **Escalate** on-call with explanation |
+| Max 2–3 iterations exhausted | Forced handoff |
+
+Details: `aiops-services/decision-engine/README.md` · `GET /decision-table`
+
+### Engine QA (port 8007 / UI 8503)
+
+“Supervise the supervisors” — on-call rates **anomaly · confidence · RCA · decision**, then aggregates:
+
+- Precision / recall *estimate*, false-positive rate  
+- LLM hallucination rate  
+- Mean decision iterations before handoff  
+- **Advisory** confidence-weight & threshold tuning (never auto-applied)
+
+UI: http://localhost:8503 · API: `POST /qa/reviews`, `GET /qa/metrics`, `GET /qa/tuning/report`
+
+---
+
+## Ports
+
+| Component | Port | Notes |
+|-----------|------|--------|
+| Grafana | 3000 | Import `observability/grafana/dashboards/aiops-engine-health.json` |
+| OTLP | 4317 / 4318 | Prefer HTTP 4318 for demos |
+| Prometheus | 9090 | PromQL source for detector + RCA |
+| Loki / Tempo | 3100 / 3200 | Evidence + deep-links |
+| checkout / payment | 8080 / 8081 | Chaos-capable demo apps |
+| anomaly-detector | 8001 | `/detect`, `/metrics` |
+| incident-manager | **8002** | Console + tickets |
+| rca-engine | 8003 | `/analyze-incident/{id}` |
+| remediation | 8004 + **8501** UI | Approve & execute |
+| feedback | 8005 + **8502** UI | On-call review |
+| **decision-engine** | **8006** | Confidence-gated routing (see decision table) |
+| **engine-qa** | **8007** + **8503** UI | Meta-QA: precision/FP/hallucination/tuning |
+| **AIOps Console** | **8500** | Unified Streamlit: Incidents + Health |
+
+---
+
+## Setup (one command)
+
+```bash
+cp .env.example .env
+# Optional Bedrock:
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / BEDROCK_MODEL_ID=amazon.nova-lite-v1:0
+
+docker compose up -d --build
+```
+
+---
+
+## How to Generate Dynamic Load & Anomalies
+
+Telemetry must **change over time** so EWMA/STL/IsolationForest and Loki/Tempo stay realistic.
+
+### Multi-stage load (recommended)
+
+```bash
+# Stages: normal → traffic spike → error injection → latency injection → recovery
+python scripts/dynamic_load.py --profile demo
+# shorter stages:
+python scripts/dynamic_load.py --profile demo --stage-seconds 15
+```
+
+Each stage POSTs `/chaos` on checkout/payment (`error_rate`, `extra_latency_ms`, **`fault_mode`**) and drives concurrent `/checkout` traffic so RED metrics, error logs, and traces move together.
+
+### Single chaos knobs
+
+```bash
+python scripts/chaos.py --service payment --error-rate 0.4 --fault-mode db_pool
+python scripts/chaos.py --service checkout --extra-latency-ms 1200 --fault-mode cache_miss
 python scripts/chaos.py --reset
 ```
 
-> **Ports:** host ports `3000` and `9090` must be free (stop other Grafana/Prometheus stacks first if bind fails).
-
-- **Grafana**: http://localhost:3000  
-- **Detector API**: http://localhost:8001/docs  
-- **Incidents API**: http://localhost:8002/docs  
-
-## Day-2 (Bedrock)
+### Scenario from evaluation dataset
 
 ```bash
-# set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, BEDROCK_MODEL_ID in .env
-docker compose --profile day2 up -d --build
+python scripts/run_scenario.py --list
+python scripts/run_scenario.py --scenario rca-01-payment-db-pool --duration 45
 ```
+
+Then watch: Grafana `:3000`, detector `:8001/results`, incidents `:8002`.
+
+Fault modes emit production-like log lines, e.g. *database connection pool exhaustion*, *cache miss storm*.
+
+---
+
+## How to Run RCA Evaluation
+
+Mini ground-truth set: **10 RCA scenarios** + **8 anomaly series** under `evaluation/`.
+
+```bash
+# One command — offline anomaly + RCA (no AWS required)
+bash scripts/run-evaluation.sh
+
+# With live stack RCA API:
+bash scripts/run-evaluation.sh --online
+
+# Plus dynamic load after scoring:
+bash scripts/run-evaluation.sh --with-load
+```
+
+Or step-by-step:
+
+```bash
+pip install pyyaml
+python evaluation/evaluate_anomaly.py
+python evaluation/evaluate_rca.py --mode offline
+# optional Bedrock:
+python evaluation/evaluate_rca.py --mode offline --bedrock
+python evaluation/evaluate_rca.py --mode online
+```
+
+### Sample evaluation results (offline)
+
+| Suite | Metric | Notes |
+|-------|--------|--------|
+| **Anomaly** (8) | F1 gate ≥ 0.75 in CI | Hybrid detector on labeled series |
+| **RCA** (12 incl. hard) | Accuracy gate ≥ 0.70 in CI | rule_based + keyword/Jaccard match |
+| **Baselines** | System must **beat** random / always-error / empty | Prevents “dataset overfit” theater |
+
+```bash
+bash scripts/run-evaluation.sh
+python evaluation/evaluate_baselines.py --require-beats-baselines
+```
+
+Artifacts: `evaluation/results/{anomaly,rca,baselines}_latest.json`.  
+Definitions: [`evaluation/README.md`](evaluation/README.md).
+
+### One-shot demo (for your video)
+
+```bash
+docker compose up -d --build
+bash scripts/wait_for_stack.sh
+python scripts/demo_one_shot.py
+# then record: Console :8500 · Incident :8002 · Grafana :3000
+```
+
+Wait ~1–2 min first boot (LGTM). Then:
+
+```bash
+python scripts/demo_story.py          # narrative + prints Trace URL
+# or
+python scripts/demo_e2e.py
+python scripts/generate_incident.py --full
+```
+
+---
+
+## How to demo (3–5 minutes)
+
+Full talk track: **[docs/DEMO_STORY.md](docs/DEMO_STORY.md)** · Video shot list: **[scripts/DEMO_VIDEO.md](scripts/DEMO_VIDEO.md)**
+
+| Minute | Action |
+|--------|--------|
+| 0:00 | Architecture Mermaid + pitch |
+| 0:30 | `python scripts/demo_story.py` |
+| 1:30 | Incident Console — explanation column |
+| 2:00 | Click **🔍 Xem Trace** → Grafana Tempo |
+| 2:40 | Remediation UI risk gates |
+| 3:10 | Feedback thumbs + `/metrics` quality |
+| 3:40 | Production upgrades (Kafka, Postgres, outbox) |
+
+---
 
 ## Project layout
 
@@ -66,28 +318,72 @@ docker compose --profile day2 up -d --build
 aiops-demo-bedrock/
 ├── docker-compose.yml
 ├── .env.example
-├── apps/                    # checkout + payment (OTel demo stand-in)
-├── observability/           # notes for LGTM / future dashboards
+├── apps/                      # OTel-emitting demo services (+ chaos)
 ├── aiops-services/
-│   ├── anomaly-detector/
-│   ├── incident-manager/
-│   ├── rca-engine/          # Day-2
-│   ├── remediation/         # Day-2
-│   └── feedback-collector/  # Day-2
-├── shared/aiops_shared/     # models, OTEL bootstrap, Redis helpers
-└── scripts/                 # load test, chaos, demo flow
+│   ├── anomaly-detector/      # hybrid + explainable notifier
+│   ├── incident-manager/      # tickets + trace-first console
+│   ├── rca-engine/            # grounded Bedrock RCA + trace attach
+│   ├── remediation/           # gated actions + Streamlit
+│   └── feedback-collector/    # review loop + quality metrics
+├── shared/aiops_shared/       # models, OTEL, Redis, grafana_links
+├── observability/             # dashboards + scrape snippets
+├── docs/DEMO_STORY.md
+└── scripts/                   # demo_story, e2e, generate-incident, …
 ```
 
-## Production choices (interview talking points)
+---
 
-- **OTLP HTTP `:4318`** — simpler than gRPC across language SDKs for demos.
-- **Healthchecks + `depends_on: condition: service_healthy`** — ordered startup without racey sleep scripts.
-- **Redis LIST queue** — teach detect→act pipeline; swap for SQS/Kafka in production.
-- **SQLite + WAL on a volume** — zero-ops tickets for laptop demos; Postgres in prod.
-- **Incident correlation window** — reduce alert noise (same service+metric).
-- **Non-root containers, log rotation, fail-open telemetry** — baseline hardened defaults.
-- **Amazon Bedrock** — RCA without self-hosting LLMs; keys only in `.env` (never committed).
+## Production notes (interview depth)
+
+| Demo choice | Why | Production evolution |
+|-------------|-----|----------------------|
+| Prom **pull** detection | Isolate blast radius; same queries as humans | Stream processor / remote_write for scale |
+| Redis LIST | Teach detect→act; zero ops | Kafka/SQS + DLQ + consumer groups |
+| SQLite WAL | Laptop CV demo | Postgres multi-AZ + PITR |
+| Async RCA webhook | Don't block ticket path on LLM latency | Outbox + workers + retries |
+| Grounded JSON RCA | Prevent hallucination | Schema registry + eval harness |
+| Risk gates | Prevent runaway automation | Change freezes, dual control, policy engine |
+| Feedback gauges | AIOps must observe itself | Retrain/detector calibration pipelines |
+
+### What we intentionally did **not** do
+
+- Auto-restart everything on every alert  
+- Ungrounded “ChatGPT ops” from the ticket title alone  
+- Hiding ML scores without an English explanation  
+- Multi-GB full OpenTelemetry Demo by default (apps/ stand-in keeps the laptop usable; LGTM remains the real backbone)
+
+---
+
+## Configuration highlights
+
+| Env | Purpose |
+|-----|---------|
+| `GRAFANA_PUBLIC_URL` | Browser URL for Trace buttons (`http://localhost:3000`) |
+| `TEMPO_DATASOURCE_UID` / `LOKI_DATASOURCE_UID` | Grafana datasource UIDs for Explore links |
+| `BEDROCK_MODEL_ID` | Default `amazon.nova-lite-v1:0` |
+| `RCA_ENGINE_URL` | Incident → RCA |
+| `REMEDIATION_URL` | RCA → propose actions |
+| `ZSCORE_THRESHOLD` / `ERROR_RATE_THRESHOLD` | Detector sensitivity |
+
+---
+
+## Troubleshooting
+
+```bash
+docker compose ps
+docker compose logs -f aiops-anomaly-detector aiops-incident-manager aiops-rca-engine
+curl -s http://localhost:8002/incidents?limit=1 | jq .
+curl -s http://localhost:8002/incidents/<id>/observability-links | jq .
+```
+
+| Issue | Fix |
+|-------|-----|
+| Trace button opens empty Explore | Confirm Tempo has traces (generate load); check datasource UID in Grafana |
+| RCA always rule-based | Set AWS keys; use an enabled model id |
+| Port conflicts | Free 3000/9090/8001–8005/8501–8502 |
+
+---
 
 ## License
 
-MIT — demo / portfolio use.
+MIT — portfolio / workshop use. Never commit `.env` secrets.

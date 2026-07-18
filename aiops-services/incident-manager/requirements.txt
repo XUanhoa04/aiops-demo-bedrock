@@ -1,2 +1,3 @@
 # Docker installs shared/requirements-base.txt + the packages below.
 aiosqlite==0.20.0
+prometheus-client==0.21.1

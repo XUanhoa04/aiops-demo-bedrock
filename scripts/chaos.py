@@ -41,6 +41,11 @@ def main() -> int:
     p.add_argument("--base-latency-ms", type=float, default=None)
     p.add_argument("--extra-latency-ms", type=float, default=None)
     p.add_argument(
+        "--fault-mode",
+        default=None,
+        help="none|db_pool|cache_miss|dependency_timeout|cpu_throttle|gateway_timeout|redis_cache_miss",
+    )
+    p.add_argument(
         "--reset",
         action="store_true",
         help="Reset both services to healthy baseline",
@@ -49,7 +54,11 @@ def main() -> int:
 
     if args.reset:
         for name, url in SERVICES.items():
-            body = {"error_rate": 0.01 if name == "payment" else 0.02, "extra_latency_ms": 0}
+            body = {
+                "error_rate": 0.01 if name == "payment" else 0.02,
+                "extra_latency_ms": 0,
+                "fault_mode": "none",
+            }
             print(name, post_chaos(url, body))
         return 0
 
@@ -60,8 +69,13 @@ def main() -> int:
         payload["base_latency_ms"] = args.base_latency_ms
     if args.extra_latency_ms is not None:
         payload["extra_latency_ms"] = args.extra_latency_ms
+    if args.fault_mode is not None:
+        payload["fault_mode"] = args.fault_mode
     if not payload:
-        print("nothing to do; pass --error-rate / --extra-latency-ms or --reset", file=sys.stderr)
+        print(
+            "nothing to do; pass --error-rate / --extra-latency-ms / --fault-mode or --reset",
+            file=sys.stderr,
+        )
         return 2
 
     result = post_chaos(SERVICES[args.service], payload)

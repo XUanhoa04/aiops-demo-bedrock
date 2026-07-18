@@ -1,0 +1,2 @@
+# Decision Engine — thin control-plane (shared base already has FastAPI/httpx/redis)
+prometheus-client==0.21.1

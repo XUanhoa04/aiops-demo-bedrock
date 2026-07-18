@@ -1,0 +1,36 @@
+{
+  "generated_at": "2026-07-18T12:40:26.087132+00:00",
+  "dataset": "D:\\project\\aiops-demo-bedrock\\evaluation\\rca_scenarios.yaml",
+  "results": {
+    "system_rule_based": {
+      "n": 12,
+      "correct": 12,
+      "accuracy": 1.0,
+      "mean_jaccard": 0.5272,
+      "mean_keyword_rate": 0.8056
+    },
+    "baseline_random": {
+      "n": 12,
+      "correct": 0,
+      "accuracy": 0.0,
+      "mean_jaccard": 0.0,
+      "mean_keyword_rate": 0.0
+    },
+    "baseline_always_error_rate": {
+      "n": 12,
+      "correct": 1,
+      "accuracy": 0.0833,
+      "mean_jaccard": 0.1027,
+      "mean_keyword_rate": 0.1667
+    },
+    "baseline_empty": {
+      "n": 12,
+      "correct": 0,
+      "accuracy": 0.0,
+      "mean_jaccard": 0.0,
+      "mean_keyword_rate": 0.0
+    }
+  },
+  "system_beats_baselines": true,
+  "best_baseline_accuracy": 0.0833
+}

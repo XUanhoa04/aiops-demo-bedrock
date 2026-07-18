@@ -1,5 +1,9 @@
 # Shared runtime deps for all Python services in this monorepo.
-# Pin loosely for demo reproducibility; production should lock with poetry/uv/pip-tools.
+# Pin for demo reproducibility; production should lock with poetry/uv/pip-tools.
+#
+# Install order in Docker:
+#   pip install -r shared/requirements-base.txt
+#   pip install -r <service>/requirements.txt
 
 fastapi==0.115.6
 uvicorn[standard]==0.32.1

@@ -1,0 +1,46 @@
+# Optional scrape snippets for AIOps exporters.
+# Merge into Prometheus/Mimir scrape config, or use Grafana Explore →
+# Prometheus with a temporary scrape if your LGTM image supports extra jobs.
+#
+# Targets are container DNS names on the compose network `aiops-demo-net`.
+
+scrape_configs:
+  - job_name: aiops-anomaly-detector
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["aiops-anomaly-detector:8001"]
+        labels:
+          service: aiops-anomaly-detector
+
+  - job_name: aiops-incident-manager
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["aiops-incident-manager:8002"]
+        labels:
+          service: aiops-incident-manager
+
+  - job_name: aiops-feedback-collector
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["aiops-feedback-collector:8005"]
+        labels:
+          service: aiops-feedback-collector
+
+  - job_name: aiops-decision-engine
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["aiops-decision-engine:8006"]
+        labels:
+          service: aiops-decision-engine
+
+  - job_name: aiops-engine-qa
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["aiops-engine-qa:8007"]
+        labels:
+          service: aiops-engine-qa
