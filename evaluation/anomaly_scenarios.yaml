@@ -1,4 +1,4 @@
-version: '1.1'
+version: '1.2'
 dataset_name: aiops-anomaly-suite
 scenarios:
 - scenario_id: ad-01-error-rate-spike
@@ -464,5 +464,235 @@ scenarios:
   - 0.02
   - 0.45
   absolute_threshold: 0.15
+- scenario_id: ad-21-seasonal-long-spike
+  split: holdout
+  mode: univariate
+  description: Longer seasonal then spike
+  service: payment-service
+  metric_name: http_error_rate
+  label: anomaly
+  values:
+  - 0.04
+  - 0.0488
+  - 0.0543
+  - 0.0543
+  - 0.0488
+  - 0.04
+  - 0.0312
+  - 0.0257
+  - 0.0257
+  - 0.0312
+  - 0.04
+  - 0.0488
+  - 0.0543
+  - 0.0543
+  - 0.0488
+  - 0.04
+  - 0.0312
+  - 0.0257
+  - 0.0257
+  - 0.0312
+  - 0.04
+  - 0.0488
+  - 0.0543
+  - 0.0543
+  - 0.0488
+  - 0.04
+  - 0.0312
+  - 0.0257
+  - 0.0257
+  - 0.5
+  absolute_threshold: 0.15
+- scenario_id: ad-22-seasonal-long-normal
+  split: holdout
+  mode: univariate
+  description: Long seasonal healthy
+  service: payment-service
+  metric_name: http_error_rate
+  label: normal
+  values:
+  - 0.04
+  - 0.0488
+  - 0.0543
+  - 0.0543
+  - 0.0488
+  - 0.04
+  - 0.0312
+  - 0.0257
+  - 0.0257
+  - 0.0312
+  - 0.04
+  - 0.0488
+  - 0.0543
+  - 0.0543
+  - 0.0488
+  - 0.04
+  - 0.0312
+  - 0.0257
+  - 0.0257
+  - 0.0312
+  - 0.04
+  - 0.0488
+  - 0.0543
+  - 0.0543
+  - 0.0488
+  - 0.04
+  - 0.0312
+  - 0.0257
+  - 0.0257
+  - 0.0312
+  absolute_threshold: 0.15
+- scenario_id: ad-23-multivariate-error-latency
+  split: holdout
+  mode: multivariate
+  description: Joint error+latency multivariate outlier
+  service: payment-service
+  label: anomaly
+  features_series:
+  - http_request_rate: 15.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 16.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 15.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 16.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 15.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 16.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 15.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 16.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 15.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 16.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 15.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 16.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 15.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 16.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 15.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 16.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 15.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 16.0
+    http_error_rate: 0.02
+    http_latency_p95_seconds: 0.06
+  - http_request_rate: 1.5
+    http_error_rate: 0.22
+    http_latency_p95_seconds: 1.8
+  absolute_threshold: 0.15
+- scenario_id: ad-24-rps-only-cliff
+  split: holdout
+  mode: univariate
+  description: Request rate cliff
+  service: payment-service
+  metric_name: http_request_rate
+  label: anomaly
+  values:
+  - 25
+  - 24
+  - 26
+  - 25
+  - 24
+  - 25
+  - 23
+  - 24
+  - 25
+  - 0.5
+  absolute_threshold: 5.0
+- scenario_id: ad-25-latency-borderline-normal
+  split: holdout
+  mode: univariate
+  description: Latency just under threshold
+  service: checkout-service
+  metric_name: http_latency_p95_seconds
+  label: normal
+  values:
+  - 0.1
+  - 0.2
+  - 0.3
+  - 0.4
+  - 0.5
+  - 0.6
+  - 0.7
+  - 0.75
+  - 0.78
+  - 0.79
+  absolute_threshold: 0.8
+- scenario_id: ad-26-latency-borderline-anomaly
+  split: holdout
+  mode: univariate
+  description: Latency just over threshold
+  service: checkout-service
+  metric_name: http_latency_p95_seconds
+  label: anomaly
+  values:
+  - 0.1
+  - 0.2
+  - 0.3
+  - 0.4
+  - 0.5
+  - 0.6
+  - 0.7
+  - 0.75
+  - 0.8
+  - 0.95
+  absolute_threshold: 0.8
+- scenario_id: ad-27-cold-start-normal
+  split: holdout
+  mode: univariate
+  description: Few samples all healthy (TN cold start)
+  service: checkout-service
+  metric_name: http_error_rate
+  label: normal
+  values:
+  - 0.01
+  - 0.02
+  - 0.01
+  - 0.02
+  - 0.015
+  absolute_threshold: 0.15
+- scenario_id: ad-28-double-latency-spike
+  split: holdout
+  mode: univariate
+  description: Two latency spikes end high
+  service: payment-service
+  metric_name: http_latency_p95_seconds
+  label: anomaly
+  values:
+  - 0.05
+  - 0.06
+  - 1.2
+  - 0.08
+  - 0.07
+  - 0.06
+  - 1.5
+  absolute_threshold: 0.8
 description: Core + holdout anomaly series. Holdout covers seasonal, multivariate IF, cold-start, flapping,
   near-threshold, recovery.

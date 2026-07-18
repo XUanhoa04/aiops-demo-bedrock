@@ -8,8 +8,10 @@ Ground-truth datasets + offline harnesses for **quantitative** quality of:
 ## Why a dataset?
 
 Without fixed scenarios, every model/prompt change is “it looked good in the demo”.  
-Suite size (approx.): **~30 RCA** (core + holdout) and **~20 anomaly** series.
-This is a **regression suite** — not production-perfect quality.
+Suite size (approx.): **~40 RCA** (core + holdout) and **~28 anomaly** series.
+Rule RCA matches **`config/rca_patterns.yaml`** (config-driven), not hard-coded
+`if scenario_id` branches. This is a **regression suite** for that catalog — not
+learned ML quality.
 
 CI gates:
 - Anomaly overall F1 ≥ 0.70, **core** F1 ≥ 0.75  

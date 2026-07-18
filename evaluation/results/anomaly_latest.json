@@ -1,23 +1,23 @@
 {
-  "generated_at": "2026-07-18T15:17:48.477221+00:00",
+  "generated_at": "2026-07-18T15:38:58.460540+00:00",
   "dataset": [
     "D:\\project\\aiops-demo-bedrock\\evaluation\\anomaly_scenarios.yaml"
   ],
   "split_filter": "all",
   "split_counts": {
     "core": 8,
-    "holdout": 12,
+    "holdout": 20,
     "other": 0
   },
   "aggregate": {
-    "n": 20,
-    "precision": 0.9167,
+    "n": 28,
+    "precision": 0.9412,
     "recall": 1.0,
-    "f1": 0.9565,
-    "accuracy": 0.95,
-    "tp": 11,
+    "f1": 0.9697,
+    "accuracy": 0.9643,
+    "tp": 16,
     "fp": 1,
-    "tn": 8,
+    "tn": 11,
     "fn": 0
   },
   "by_split": {
@@ -33,14 +33,14 @@
       "fn": 0
     },
     "holdout": {
-      "n": 12,
-      "precision": 0.875,
+      "n": 20,
+      "precision": 0.9231,
       "recall": 1.0,
-      "f1": 0.9333,
-      "accuracy": 0.9167,
-      "tp": 7,
+      "f1": 0.96,
+      "accuracy": 0.95,
+      "tp": 12,
       "fp": 1,
-      "tn": 4,
+      "tn": 7,
       "fn": 0
     }
   },
@@ -302,7 +302,112 @@
         "manual"
       ],
       "last_value": 0.45
+    },
+    {
+      "scenario_id": "ad-21-seasonal-long-spike",
+      "split": "holdout",
+      "mode": "univariate",
+      "label": "anomaly",
+      "predicted_anomaly": true,
+      "outcome": "TP",
+      "score": 5.3421,
+      "methods": [
+        "zscore",
+        "manual"
+      ],
+      "last_value": 0.5
+    },
+    {
+      "scenario_id": "ad-22-seasonal-long-normal",
+      "split": "holdout",
+      "mode": "univariate",
+      "label": "normal",
+      "predicted_anomaly": false,
+      "outcome": "TN",
+      "score": 0.8287,
+      "methods": [],
+      "last_value": 0.0312
+    },
+    {
+      "scenario_id": "ad-23-multivariate-error-latency",
+      "split": "holdout",
+      "mode": "multivariate",
+      "label": "anomaly",
+      "predicted_anomaly": true,
+      "outcome": "TP",
+      "score": 4.2426,
+      "methods": [
+        "zscore",
+        "threshold",
+        "isolation_forest"
+      ],
+      "last_value": {
+        "http_request_rate": 1.5,
+        "http_error_rate": 0.22,
+        "http_latency_p95_seconds": 1.8
+      }
+    },
+    {
+      "scenario_id": "ad-24-rps-only-cliff",
+      "split": "holdout",
+      "mode": "univariate",
+      "label": "anomaly",
+      "predicted_anomaly": true,
+      "outcome": "TP",
+      "score": 2.9822,
+      "methods": [
+        "zscore"
+      ],
+      "last_value": 0.5
+    },
+    {
+      "scenario_id": "ad-25-latency-borderline-normal",
+      "split": "holdout",
+      "mode": "univariate",
+      "label": "normal",
+      "predicted_anomaly": false,
+      "outcome": "TN",
+      "score": 1.1608,
+      "methods": [],
+      "last_value": 0.79
+    },
+    {
+      "scenario_id": "ad-26-latency-borderline-anomaly",
+      "split": "holdout",
+      "mode": "univariate",
+      "label": "anomaly",
+      "predicted_anomaly": true,
+      "outcome": "TP",
+      "score": 1.592,
+      "methods": [
+        "manual"
+      ],
+      "last_value": 0.95
+    },
+    {
+      "scenario_id": "ad-27-cold-start-normal",
+      "split": "holdout",
+      "mode": "univariate",
+      "label": "normal",
+      "predicted_anomaly": false,
+      "outcome": "TN",
+      "score": 0.1,
+      "methods": [],
+      "last_value": 0.015
+    },
+    {
+      "scenario_id": "ad-28-double-latency-spike",
+      "split": "holdout",
+      "mode": "univariate",
+      "label": "anomaly",
+      "predicted_anomaly": true,
+      "outcome": "TP",
+      "score": 1.875,
+      "methods": [
+        "manual"
+      ],
+      "last_value": 1.5
     }
   ],
-  "table": "scenario_id                      | split   | label   | pred | out | score\n---------------------------------+---------+---------+------+-----+------\nad-01-error-rate-spike           | core    | anomaly | Y    | TP  | 3.00 \nad-02-latency-spike              | core    | anomaly | Y    | TP  | 3.00 \nad-03-gradual-error-rise         | core    | anomaly | Y    | TP  | 2.12 \nad-04-normal-flat                | core    | normal  | N    | TN  | 1.08 \nad-05-normal-noise               | core    | normal  | N    | TN  | 0.49 \nad-06-latency-normal             | core    | normal  | N    | TN  | 0.23 \nad-07-request-drop               | core    | anomaly | Y    | TP  | 2.97 \nad-08-borderline-error           | core    | normal  | N    | TN  | 1.66 \nad-09-seasonal-with-spike        | holdout | anomaly | Y    | TP  | 4.72 \nad-10-seasonal-normal            | holdout | normal  | N    | TN  | 1.20 \nad-11-multivariate-joint-outlier | holdout | anomaly | Y    | TP  | 4.00 \nad-12-multivariate-normal        | holdout | normal  | Y    | FP  | 1.98 \nad-13-cold-start-spike           | holdout | anomaly | Y    | TP  | 3.67 \nad-14-flapping-ends-high         | holdout | anomaly | Y    | TP  | 2.33 \nad-15-near-threshold-anomaly     | holdout | anomaly | Y    | TP  | 1.75 \nad-16-near-threshold-normal      | holdout | normal  | N    | TN  | 1.73 \nad-17-recovery-last-normal       | holdout | normal  | N    | TN  | 0.61 \nad-18-gradual-latency            | holdout | anomaly | Y    | TP  | 1.80 \nad-19-oscillating-noise          | holdout | normal  | N    | TN  | 0.33 \nad-20-double-spike               | holdout | anomaly | Y    | TP  | 3.00 "
+  "table": "scenario_id                      | split   | label   | pred | out | score\n---------------------------------+---------+---------+------+-----+------\nad-01-error-rate-spike           | core    | anomaly | Y    | TP  | 3.00 \nad-02-latency-spike              | core    | anomaly | Y    | TP  | 3.00 \nad-03-gradual-error-rise         | core    | anomaly | Y    | TP  | 2.12 \nad-04-normal-flat                | core    | normal  | N    | TN  | 1.08 \nad-05-normal-noise               | core    | normal  | N    | TN  | 0.49 \nad-06-latency-normal             | core    | normal  | N    | TN  | 0.23 \nad-07-request-drop               | core    | anomaly | Y    | TP  | 2.97 \nad-08-borderline-error           | core    | normal  | N    | TN  | 1.66 \nad-09-seasonal-with-spike        | holdout | anomaly | Y    | TP  | 4.72 \nad-10-seasonal-normal            | holdout | normal  | N    | TN  | 1.20 \nad-11-multivariate-joint-outlier | holdout | anomaly | Y    | TP  | 4.00 \nad-12-multivariate-normal        | holdout | normal  | Y    | FP  | 1.98 \nad-13-cold-start-spike           | holdout | anomaly | Y    | TP  | 3.67 \nad-14-flapping-ends-high         | holdout | anomaly | Y    | TP  | 2.33 \nad-15-near-threshold-anomaly     | holdout | anomaly | Y    | TP  | 1.75 \nad-16-near-threshold-normal      | holdout | normal  | N    | TN  | 1.73 \nad-17-recovery-last-normal       | holdout | normal  | N    | TN  | 0.61 \nad-18-gradual-latency            | holdout | anomaly | Y    | TP  | 1.80 \nad-19-oscillating-noise          | holdout | normal  | N    | TN  | 0.33 \nad-20-double-spike               | holdout | anomaly | Y    | TP  | 3.00 \nad-21-seasonal-long-spike        | holdout | anomaly | Y    | TP  | 5.34 \nad-22-seasonal-long-normal       | holdout | normal  | N    | TN  | 0.83 \nad-23-multivariate-error-latency | holdout | anomaly | Y    | TP  | 4.24 \nad-24-rps-only-cliff             | holdout | anomaly | Y    | TP  | 2.98 \nad-25-latency-borderline-normal  | holdout | normal  | N    | TN  | 1.16 \nad-26-latency-borderline-anomaly | holdout | anomaly | Y    | TP  | 1.59 \nad-27-cold-start-normal          | holdout | normal  | N    | TN  | 0.10 \nad-28-double-latency-spike       | holdout | anomaly | Y    | TP  | 1.88 "
 }

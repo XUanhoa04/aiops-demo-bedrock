@@ -1,0 +1,202 @@
+# =============================================================================
+# Config-driven RCA patterns (NOT hard-coded if/else per demo scenario)
+# =============================================================================
+#
+# Why this file exists
+# --------------------
+# Rule-based RCA should be *data*: ops can add synonyms / runbooks without
+# editing Python. Patterns are matched against grounded EvidencePack fields
+# (logs, neighbor logs, metrics, change_events, topology).
+#
+# Matching is intentionally keyword/regex-light so it stays explainable.
+# Priority is relative; topology correlation can still override the symptom
+# service when an upstream is significantly sicker.
+#
+# Adding a new fault class:
+#   1. Add a pattern block here
+#   2. Optionally add evaluation scenarios that exercise it
+#   3. Do NOT special-case scenario_id in Python
+# =============================================================================
+
+version: "1.0"
+description: "Explainable RCA pattern catalog for rule fallback"
+
+# Global metric thresholds (also used when no log pattern fires)
+metrics:
+  error_rate_elevated: 0.10
+  error_rate_high: 0.20
+  latency_p95_elevated_seconds: 0.50
+  # Prefer dependency root when neighbor exceeds primary by these margins
+  error_rate_neighbor_margin: 0.05
+  latency_neighbor_margin_seconds: 0.20
+
+patterns:
+  - id: db_pool
+    fault_class: pool
+    priority: 100
+    # Match if ANY phrase appears in primary+neighbor log blob (lowercase)
+    log_any:
+      - "connection pool"
+      - "pool exhausted"
+      - "pool exhaustion"
+      - "remaining connection slots"
+      - "maxpoolsize"
+      - "could not obtain jdbc"
+      - "could not obtain connection"
+      - "jdbc connection"
+      - "no free connections"
+      - "hikari"
+      - "too many connections"
+    prefer_service_from_logs: true
+    prefer_upstream_if_sicker: true
+    root_cause_template: "{service} database connection pool exhaustion"
+    why: >
+      Error logs indicate database connection pool saturation; the ticket service
+      may only show cascade symptoms when the pool lives on an upstream dependency.
+    runbook: db-connection-pool
+    actions:
+      - "Increase pool size / fix connection leak on {service}"
+      - "Reset demo chaos fault_mode=db_pool if injected"
+    base_confidence: 68
+
+  - id: cache_miss
+    fault_class: cache
+    priority: 90
+    log_any:
+      - "cache miss"
+      - "cold redis"
+      - "redis keyspace"
+      - "redis get miss"
+      - "redis cache miss"
+      - "falling back to origin"
+      - "cold card-token"
+      - "cache cold"
+    # If multiple services hit cache phrases → shared infra root
+    multi_service_shared_root: "shared redis-cache miss storm / cold keyspace affecting checkout and payment"
+    prefer_service_from_logs: true
+    prefer_upstream_if_sicker: false
+    root_cause_template: "{service} high latency due to cache miss / cold redis keyspace"
+    why: "Logs indicate cache miss storm; origin/DB path is hit repeatedly."
+    runbook: cache-miss-latency
+    actions:
+      - "Warm cache / check redis availability"
+    base_confidence: 60
+
+  - id: payment_gateway
+    fault_class: gateway
+    priority: 95
+    log_any:
+      - "gateway timeout"
+      - "payment gateway"
+      - "psp provider"
+      - "deadline exceeded"
+      - "client timeout waiting for upstream"
+      - "upstream dependency timeout"
+      - "dependency timeout"
+    force_service: payment-service
+    prefer_upstream_if_sicker: true
+    root_cause_template: "payment gateway timeout / dependency failure"
+    why: >
+      Logs show payment gateway / upstream dependency timeouts cascading into
+      callers. Topology: checkout depends_on payment-service.
+    runbook: dependency-timeout
+    actions:
+      - "Check payment-service chaos / gateway health"
+      - "Tune client timeouts and circuit breakers"
+    base_confidence: 62
+
+  - id: cpu_saturation
+    fault_class: cpu
+    priority: 80
+    log_any:
+      - "cpu throttle"
+      - "thread pool"
+      - "worker pool"
+      - "run queue full"
+      - "scheduling delayed"
+      - "executor run queue"
+      - "throttl"
+    prefer_service_from_logs: true
+    root_cause_template: "{service} worker/thread pool saturation or CPU throttle"
+    why: "Logs indicate worker saturation; latency rises before hard errors."
+    runbook: cpu-saturation
+    actions:
+      - "Scale workers / check CPU on {service}"
+    base_confidence: 55
+
+  - id: fraud_scoring
+    fault_class: fraud
+    priority: 92
+    log_any:
+      - "fraud-service"
+      - "fraud scoring"
+      - "rule engine saturated"
+      - "fraud dependency"
+    force_service: fraud-service
+    prefer_upstream_if_sicker: true
+    root_cause_template: "fraud-service latency / scoring saturation cascading into payment and checkout"
+    why: >
+      Fraud scoring saturation is upstream of payment; checkout only shows cascade
+      symptoms (multi-hop topology).
+    runbook: fraud-dependency
+    actions:
+      - "Investigate fraud-service first (upstream of payment)"
+      - "Do not restart checkout until fraud healthy"
+    base_confidence: 65
+
+  - id: inventory_lock
+    fault_class: inventory
+    priority: 91
+    log_any:
+      - "stock lock"
+      - "inventory reserve"
+      - "inventory-service"
+      - "locks exhausted"
+      - "sku lock"
+    force_service: inventory-service
+    prefer_upstream_if_sicker: true
+    root_cause_template: "inventory-service stock lock / DB contention causing checkout latency"
+    why: "Inventory stock-lock waits stall checkout; inventory is a checkout dependency."
+    runbook: inventory-stock-lock
+    actions:
+      - "Inspect inventory locks / postgres-inventory"
+      - "Reduce lock scope or scale inventory"
+    base_confidence: 66
+
+  - id: post_deploy
+    fault_class: change
+    priority: 70
+    log_any:
+      - "deploy "
+      - " after release"
+      - "rolled out"
+      - "post-deploy"
+      - "bad release"
+    # Also matches change_events[].type in {deploy, release, rollback}
+    change_event_types:
+      - deploy
+      - release
+      - rollback
+    prefer_service_from_logs: true
+    root_cause_template: "{service} post-deploy regression / bad release correlated with error spike"
+    why: "Change/deploy markers correlate with the error window — prefer rollback investigation."
+    runbook: post-deploy-regression
+    actions:
+      - "Rollback recent deploy on {service}"
+      - "Inspect release notes / error after deploy"
+    base_confidence: 58
+
+# Fallback when no pattern matches (metric-only / insufficient evidence)
+fallbacks:
+  elevated_error:
+    root_cause_template: "elevated http_error_rate on {service}"
+    root_cause_metric_only: "elevated http_error_rate on {service} with insufficient log/trace corroboration"
+    root_cause_local: "elevated error rate on {service} (local) — payment upstream healthy"
+    root_cause_incomplete_logs: "elevated error rate on {service} with incomplete log evidence"
+    base_confidence: 50
+  elevated_latency:
+    root_cause_template: "high latency p95 on {service}"
+    base_confidence: 45
+  insufficient:
+    root_cause_template: "Insufficient evidence: cannot pin root cause for {service}"
+    base_confidence: 30

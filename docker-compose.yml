@@ -286,6 +286,7 @@ services:
       SERVICE_NAME: aiops-rca-engine
       PORT: "8003"
       TOPOLOGY_PATH: ${TOPOLOGY_PATH:-/app/config/service_topology.yaml}
+      RCA_PATTERNS_PATH: ${RCA_PATTERNS_PATH:-/app/config/rca_patterns.yaml}
       ENABLE_TOPOLOGY_EXPAND: ${ENABLE_TOPOLOGY_EXPAND:-true}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}

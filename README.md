@@ -255,11 +255,11 @@ python evaluation/evaluate_rca.py --mode online
 
 | Suite | Metric | Notes |
 |-------|--------|--------|
-| **Anomaly** (~20, core+holdout) | Overall F1 ≥ 0.70; **core** F1 ≥ 0.75 | Uni + seasonal + multivariate IF |
-| **RCA** (~30, core+holdout) | Overall ≥ 0.70; **holdout** ≥ 0.55 | Multi-hop, partial backends, paraphrase — regression gate |
+| **Anomaly** (~28, core+holdout) | Overall F1 ≥ 0.70; **core** F1 ≥ 0.75 | Uni + seasonal + multivariate IF |
+| **RCA** (~40, core+holdout) | Overall ≥ 0.70; **holdout** ≥ 0.55 | Config patterns in `config/rca_patterns.yaml` — not per-scenario if/else |
 | **Baselines** | System must **beat** random / always-error / empty | Prevents “dataset overfit” theater |
 
-Scoring requires fault-class agreement and wrong-hop service guards. Report **core vs holdout** separately — do not sell a single accuracy as production quality.
+RCA rules are **data-driven** (`config/rca_patterns.yaml`). Offline scores = regression coverage of that catalog, not a claim of learned ML quality. Report **core vs holdout** separately.
 
 ```bash
 bash scripts/run-evaluation.sh

@@ -102,17 +102,25 @@ logs), prefer that dependency as `root_cause` — avoid wrong-hop blame on the t
 6. Decision Engine policy row → escalate / RCA suggest / gated remediate.
 7. On-call reviews in Engine QA → precision / hallucination / tuning advice.
 
+## Rule RCA is config-driven (not hard-coded per scenario)
+
+Fault classes live in **`config/rca_patterns.yaml`** (loaded by
+`aiops_shared.rca_patterns`). Python only:
+
+1. Cites grounded EvidencePack fields  
+2. Runs generic pattern match (log phrases + change_event types)  
+3. Applies topology “prefer sicker upstream”  
+4. Applies metric/insufficient fallbacks from the same YAML  
+
+**Do not** add `if scenario_id == ...` branches. To support a new failure mode,
+add synonyms / templates to the YAML catalog.
+
 ## Evaluation honesty
 
-- Offline RCA uses the **same** `rule_based_rca` path as production fallback.
-- Scoring requires **fault-class** agreement (pool / cache / gateway / fraud /
-  inventory / change / …) and wrong-hop service guards — keywords alone are not enough.
-- Scenarios are tagged `split: core | holdout`. Holdout includes multi-hop fraud,
-  inventory stock lock, shared redis, Loki-down, metric-only, conflicting signals,
-  deploy correlation, dual-fault primary, paraphrases, and no-fault empties.
-- Anomaly holdout covers seasonal series, multivariate IsolationForest, cold-start,
-  flapping, near-threshold, and recovery.
+- Offline RCA uses the **same** config-driven `rule_based_rca` path as production fallback.
+- Scoring requires **fault-class** agreement and wrong-hop service guards.
+- Scenarios are tagged `split: core | holdout` (~40 RCA, ~28 anomaly).
 - CI: anomaly overall F1 ≥ 0.70 + core F1 ≥ 0.75; RCA overall ≥ 0.70 + holdout ≥ 0.55;
   system must beat naive baselines.
-- High offline rule-path scores after rule expansion are a **regression gate**, not
-  a claim of production-perfect RCA or calibrated LLM quality.
+- High offline scores mean “catalog covers the regression suite”, **not** learned
+  ML generalization or production-perfect RCA.

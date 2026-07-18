@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     # Neighbor expansion (topology-aware RCA)
     # Env: TOPOLOGY_PATH — path to config/service_topology.yaml
     topology_path: str = ""
+    # Env: RCA_PATTERNS_PATH — config/rca_patterns.yaml (config-driven rules)
+    rca_patterns_path: str = ""
     enable_topology_expand: bool = True
     max_neighbor_log_lines: int = 15
     max_neighbor_traces: int = 8

@@ -1,23 +1,37 @@
 """
 Deterministic rule-based RCA when Bedrock is unavailable, fails, or low-confidence.
 
-Uses the same EvidencePack so fallback stays grounded (template fill only).
+Design (anti hard-code)
+-----------------------
+Fault *classes* come from ``config/rca_patterns.yaml`` via
+``aiops_shared.rca_patterns`` — not per-scenario if/else in this file.
 
-Topology-aware ranking
-----------------------
-When neighbor_metrics show an *upstream* dependency is sicker than the ticket
-service (higher error rate / latency + error logs), we prefer that dependency
-as root_cause. This avoids classic wrong-hop blame (checkout symptom, payment root).
+This module only:
+  1. Builds grounded evidence citations from the EvidencePack
+  2. Runs the generic pattern matcher on log/change text
+  3. Applies topology correlation (prefer sicker upstream)
+  4. Applies metric-only / insufficient-evidence fallbacks from config
+
+Uses the same EvidencePack so fallback stays grounded (template fill only).
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
+from aiops_shared.rca_patterns import load_pattern_catalog
+
+from app.config import settings
 from app.models import EvidencePack, RCAResult
 
 
 def rule_based_rca(pack: EvidencePack) -> RCAResult:
+    catalog = load_pattern_catalog(settings.rca_patterns_path or None)
+    mcfg = catalog.metrics or {}
+    err_elev = float(mcfg.get("error_rate_elevated") or 0.10)
+    err_high = float(mcfg.get("error_rate_high") or 0.20)
+    lat_elev = float(mcfg.get("latency_p95_elevated_seconds") or 0.50)
+
     service = pack.service_name
     metrics = pack.metrics_summary or {}
     instant = metrics.get("instant") or {}
@@ -37,7 +51,7 @@ def rule_based_rca(pack: EvidencePack) -> RCAResult:
     runbook = "generic-service-degradation"
     primary_trace = pack.primary_trace_id
 
-    # --- Topology snapshot in evidence ---
+    # --- Topology snapshot ---
     topo = pack.topology or {}
     upstream = list(topo.get("upstream") or [])
     downstream = list(topo.get("downstream") or [])
@@ -70,7 +84,6 @@ def rule_based_rca(pack: EvidencePack) -> RCAResult:
             f"last={lat_range.get('last')}"
         )
 
-    # Neighbor metrics citations
     for peer, body in (pack.neighbor_metrics or {}).items():
         inst = (body or {}).get("instant") or {}
         rel = (body or {}).get("relation") or "peer"
@@ -94,8 +107,8 @@ def rule_based_rca(pack: EvidencePack) -> RCAResult:
             f"threshold={inc.get('threshold')}"
         )
 
-    # --- Topology correlation: prefer sicker upstream dependency ---
-    dep_hit = _prefer_dependency_root(pack, service, err, lat)
+    # --- Topology correlation (generic, not pattern-specific) ---
+    dep_hit = _prefer_dependency_root(pack, service, err, lat, mcfg)
     if dep_hit:
         cause_bits.append(dep_hit["root_cause"])
         why_bits.append(dep_hit["why"])
@@ -107,8 +120,16 @@ def rule_based_rca(pack: EvidencePack) -> RCAResult:
                 affected.append(a)
         evidence.extend(dep_hit.get("evidence") or [])
 
-    # Primary + neighbor logs (keyword faults)
+    # --- Config-driven pattern matching on logs + change events ---
     all_logs = list(pack.error_logs or []) + list(pack.neighbor_logs or [])
+    log_services: set[str] = set()
+    for row in all_logs:
+        svc = row.get("neighbor_service") or (row.get("labels") or {}).get(
+            "service_name"
+        )
+        if svc:
+            log_services.add(str(svc))
+
     if all_logs:
         sample = all_logs[0]
         line = sample.get("line") or ""
@@ -119,216 +140,96 @@ def rule_based_rca(pack: EvidencePack) -> RCAResult:
         if tid and not primary_trace:
             primary_trace = str(tid)
         conf = max(conf, conf + 10)
-        log_blob = " ".join(str(row.get("line") or "") for row in all_logs[:30]).lower()
-        log_svc_hint = _service_hint_from_logs(all_logs, service)
 
-        pool_hit = (
-            "connection pool" in log_blob
-            or "db_pool" in log_blob
-            or "pool exhausted" in log_blob
-            or "remaining connection slots" in log_blob
-            or "maxpoolsize" in log_blob
-            or "could not obtain jdbc" in log_blob
-            or "could not obtain connection" in log_blob
-            or ("jdbc" in log_blob and "connection" in log_blob)
+    log_blob = " ".join(str(row.get("line") or "") for row in all_logs[:40]).lower()
+    log_svc_hint = _service_hint_from_logs(all_logs, service)
+
+    matches = catalog.match_logs(
+        log_blob,
+        ticket_service=service,
+        log_service_hint=log_svc_hint,
+        log_services_seen=log_services,
+        change_events=list(pack.change_events or []),
+    )
+
+    if matches:
+        best = matches[0]
+        # Attribute root service from the *matching* log line (not first ticket log)
+        if best.pattern.prefer_service_from_logs and not best.pattern.force_service:
+            if best.source != "multi_service":
+                refined = _service_from_matching_logs(
+                    all_logs, best.matched_phrases, best.service
+                )
+                if refined:
+                    best.service = refined
+                    best.root_cause = best.pattern.root_cause_template.format(
+                        service=refined
+                    )
+        # Prefer topology dependency root when it already fired with higher conf
+        # unless pattern is multi-hop (fraud/inventory/gateway) with higher priority
+        insert_front = True
+        if dep_hit and best.score < 90:
+            insert_front = False
+        bit = best.root_cause
+        if bit not in cause_bits:
+            if insert_front:
+                cause_bits.insert(0, bit)
+            else:
+                cause_bits.append(bit)
+        why_bits.append(best.pattern.why or f"Matched pattern {best.pattern.id}")
+        conf = max(conf, int(best.pattern.base_confidence))
+        runbook = best.pattern.runbook or runbook
+        for act in best.pattern.actions:
+            actions.append(act.format(service=best.service))
+        if best.service and best.service not in affected:
+            affected.append(best.service)
+        if best.matched_phrases:
+            evidence.append(
+                f"pattern:{best.pattern.id} phrases={best.matched_phrases[:4]} "
+                f"source={best.source}"
+            )
+        evidence.append(f"pattern_catalog: path={catalog.path} version={catalog.version}")
+        actions.append("Open correlated logs/trace in Grafana Explore")
+    elif all_logs:
+        evidence.append("log: lines present but no catalog pattern matched")
+        # Error-class logs + elevated metrics → local elevated (generic)
+        errorish = any(
+            any(
+                k in (row.get("line") or "").lower()
+                for k in ("error", "fail", "timeout", "exception", "fatal")
+            )
+            for row in all_logs
         )
-        if pool_hit:
-            root_svc = log_svc_hint or service
-            # Prefer payment if logs mention payment pool even when ticket is checkout
-            if "payment" in log_blob and "payment-service" not in root_svc:
-                root_svc = "payment-service"
-            bit = f"{root_svc} database connection pool exhaustion"
-            if bit not in cause_bits:
-                cause_bits.insert(0, bit)
-            why_bits.append(
-                "Error logs mention connection pool exhaustion — classic DB pool "
-                "saturation; topology may place this on an upstream dependency "
-                "while the ticket service only shows cascade symptoms."
-            )
-            conf = max(conf, 68)
-            runbook = "db-connection-pool"
-            actions.append(f"Increase pool size / fix connection leak on {root_svc}")
-            actions.append("Reset demo chaos fault_mode=db_pool if injected")
-            if root_svc not in affected:
-                affected.append(root_svc)
-        elif (
-            "stock lock" in log_blob
-            or ("inventory" in log_blob and "lock" in log_blob)
-            or "inventory reserve failed" in log_blob
-        ):
-            root_svc = "inventory-service"
-            bit = (
-                "inventory-service stock lock / DB contention causing checkout latency"
-            )
-            if bit not in cause_bits:
-                cause_bits.insert(0, bit)
-            why_bits.append(
-                "Inventory stock-lock waits stall checkout; topology places "
-                "inventory-service as a checkout dependency."
-            )
-            conf = max(conf, 66)
-            runbook = "inventory-stock-lock"
-            actions.append("Inspect inventory locks / postgres-inventory")
-            if root_svc not in affected:
-                affected.append(root_svc)
-        elif "fraud-service" in log_blob or (
-            "fraud" in log_blob and ("scoring" in log_blob or "saturated" in log_blob)
-        ):
-            bit = (
-                "fraud-service latency / scoring saturation cascading into "
-                "payment and checkout"
-            )
-            if bit not in cause_bits:
-                cause_bits.insert(0, bit)
-            why_bits.append(
-                "Fraud scoring saturation is upstream of payment; checkout only "
-                "shows cascade symptoms (multi-hop topology)."
-            )
-            conf = max(conf, 65)
-            runbook = "fraud-dependency"
-            actions.append("Investigate fraud-service first (upstream of payment)")
-            for s in ("fraud-service", "payment-service"):
-                if s not in affected:
-                    affected.append(s)
-        elif (
-            "cache miss" in log_blob
-            or ("redis" in log_blob and "cache" in log_blob)
-            or ("redis" in log_blob and "miss" in log_blob)
-            or "falling back to origin" in log_blob
-        ):
-            # Shared redis blast: both checkout and payment mention cold path
-            svc_hits = {
-                r.get("neighbor_service")
-                or (r.get("labels") or {}).get("service_name")
-                for r in all_logs
-            }
-            multi = {"checkout-service", "payment-service"} <= {
-                str(x) for x in svc_hits if x
-            } or (
-                "checkout" in log_blob
-                and "payment" in log_blob
-                and "redis" in log_blob
-            )
-            if multi or "shared" in log_blob:
-                bit = (
-                    "shared redis-cache miss storm / cold keyspace affecting "
-                    "checkout and payment"
+        if errorish and err is not None and err >= err_elev:
+            pay = (pack.neighbor_metrics or {}).get("payment-service") or {}
+            pay_err = (pay.get("instant") or {}).get("http_error_rate")
+            fb = (catalog.fallbacks or {}).get("elevated_error") or {}
+            if (
+                pay_err is not None
+                and float(pay_err) < 0.05
+                and "checkout" in service
+            ):
+                tmpl = fb.get("root_cause_local") or (
+                    f"elevated error rate on {service} (local) — payment upstream healthy"
+                )
+                cause_bits.append(tmpl.format(service=service))
+                why_bits.append(
+                    "Error logs on ticket service with healthy payment neighbor "
+                    "→ local fault (generic metric+log fallback)."
                 )
             else:
-                root_svc = log_svc_hint or service
-                bit = f"{root_svc} high latency due to cache miss / cold redis keyspace"
-            if bit not in cause_bits:
-                cause_bits.append(bit)
-            why_bits.append(
-                "Logs indicate cache miss storm; origin/DB path is hit repeatedly."
-            )
-            conf = max(conf, 60)
-            runbook = "cache-miss-latency"
-            actions.append("Warm cache / check redis availability")
-        elif (
-            "gateway timeout" in log_blob
-            or "payment gateway" in log_blob
-            or "psp provider" in log_blob
-            or "deadline exceeded" in log_blob
-            or ("client timeout" in log_blob and "upstream" in log_blob)
-        ):
-            bit = "payment gateway timeout / dependency failure"
-            if bit not in cause_bits:
-                cause_bits.append(bit)
-            why_bits.append(
-                "Logs show payment gateway / upstream dependency timeouts cascading "
-                "into checkout errors. Topology: checkout depends_on payment-service."
-            )
-            conf = max(conf, 62)
-            if "payment-service" not in affected:
-                affected.append("payment-service")
-            runbook = "dependency-timeout"
-            actions.append("Check payment-service chaos / gateway health")
-        elif (
-            "cpu" in log_blob
-            or "thread pool" in log_blob
-            or "throttl" in log_blob
-            or "run queue full" in log_blob
-            or "scheduling delayed" in log_blob
-            or ("executor" in log_blob and "queue" in log_blob)
-        ):
-            bit = f"{service} worker/thread pool saturation or CPU throttle"
-            if bit not in cause_bits:
-                cause_bits.append(bit)
-            why_bits.append(
-                "Logs indicate worker saturation; latency rises before hard errors."
-            )
-            conf = max(conf, 55)
-            runbook = "cpu-saturation"
-        elif (
-            "deploy" in log_blob
-            or "release" in log_blob
-            or any(
-                str(e.get("type") or "").lower() == "deploy"
-                for e in (pack.change_events or [])
-            )
-        ):
-            bit = (
-                f"{service} post-deploy regression / bad release correlated "
-                f"with error spike"
-            )
-            if bit not in cause_bits:
-                cause_bits.append(bit)
-            why_bits.append(
-                "Change/deploy markers correlate with the error window — prefer "
-                "rollback investigation before infra restarts."
-            )
-            conf = max(conf, 58)
-            runbook = "post-deploy-regression"
-            actions.append(f"Rollback recent deploy on {service}")
-        elif not dep_hit:
-            # Ignore pure INFO noise as "fault evidence"
-            errorish = any(
-                any(
-                    k in (row.get("line") or "").lower()
-                    for k in ("error", "fail", "timeout", "exception", "fatal")
+                tmpl = fb.get("root_cause_template") or (
+                    "elevated http_error_rate on {service}"
                 )
-                for row in all_logs
-            )
-            if errorish and err is not None and err >= 0.15:
-                # Prefer local elevated-error when upstream is healthy
-                pay = (pack.neighbor_metrics or {}).get("payment-service") or {}
-                pay_err = (pay.get("instant") or {}).get("http_error_rate")
-                if (
-                    pay_err is not None
-                    and float(pay_err) < 0.05
-                    and "checkout" in service
-                ):
-                    cause_bits.append(
-                        f"elevated error rate on {service} (local) — "
-                        f"payment upstream healthy"
-                    )
-                    why_bits.append(
-                        "Error logs on the ticket service with a healthy payment "
-                        "neighbor → local fault, not wrong-hop dependency blame."
-                    )
-                    conf = max(conf, 55)
-                    runbook = "elevated-http-error-rate"
-                else:
-                    cause_bits.append(
-                        f"elevated error rate on {service} — error logs present"
-                    )
-                    why_bits.append(
-                        "Loki returned error-class log lines in the evidence window."
-                    )
-                    conf = max(conf, 50)
-            elif errorish:
-                cause_bits.append("error-pattern logs present in Loki window")
-                why_bits.append(
-                    "Loki returned error-class log lines in the evidence window, "
-                    "supporting that the service is actively failing rather than "
-                    "a pure metric glitch."
-                )
-        actions.append("Open correlated logs/trace in Grafana Explore")
+                cause_bits.append(tmpl.format(service=service))
+                why_bits.append("Error-class logs present with elevated error rate.")
+            conf = max(conf, int(fb.get("base_confidence") or 50))
+            runbook = "elevated-http-error-rate"
+            actions.append("Open correlated logs/trace in Grafana Explore")
     else:
         evidence.append("log: no error lines in window (or Loki empty)")
 
-    # Traces (primary + neighbor)
+    # --- Traces ---
     all_traces = list(pack.traces or []) + list(pack.neighbor_traces or [])
     if all_traces:
         slow = sorted(
@@ -342,15 +243,12 @@ def rule_based_rca(pack: EvidencePack) -> RCAResult:
             f"{slow.get('root_name')} duration_ms={slow.get('duration_ms')}"
         )
         conf = max(conf, conf + 5)
-        if (slow.get("duration_ms") or 0) >= 500:
-            if not any("slow" in c.lower() for c in cause_bits):
-                cause_bits.append(
-                    f"slow traces observed (~{slow.get('duration_ms')}ms)"
-                )
+        if (slow.get("duration_ms") or 0) >= 500 and not cause_bits:
+            cause_bits.append(
+                f"slow traces observed (~{slow.get('duration_ms')}ms)"
+            )
             why_bits.append(
-                f"Tempo shows elevated span duration ({slow.get('duration_ms')}ms) on "
-                f"{slow.get('root_service')}, consistent with a dependency or internal "
-                f"slow path rather than a pure client retry storm."
+                f"Tempo shows elevated span duration ({slow.get('duration_ms')}ms)."
             )
             if runbook == "generic-service-degradation":
                 runbook = "latency-or-dependency-slowness"
@@ -364,140 +262,117 @@ def rule_based_rca(pack: EvidencePack) -> RCAResult:
     else:
         evidence.append("trace: no matching traces in window")
 
-    # Change events
-    if pack.change_events:
+    if pack.change_events and not any("deploy" in c.lower() for c in cause_bits):
         ev = pack.change_events[0]
         evidence.append(
             f"change_event: type={ev.get('type')} service={ev.get('service')} "
             f"msg={(ev.get('message') or '')[:100]}"
         )
-        conf = max(conf, conf + 5)
-        why_bits.append(
-            "Recent change/chaos markers appear in logs; correlate with deploy window."
-        )
-        if str(ev.get("type") or "").lower() in {"deploy", "release", "rollback"}:
-            if not any("deploy" in c.lower() or "release" in c.lower() for c in cause_bits):
-                cause_bits.append(
-                    f"{ev.get('service') or service} post-deploy regression / "
-                    f"bad release correlated with error spike"
-                )
-                conf = max(conf, 58)
-                runbook = "post-deploy-regression"
 
-    if pack.gather_errors:
-        evidence.append("gather_errors: " + "; ".join(pack.gather_errors[:5]))
-        conf = min(conf, 40)
-        why_bits.append(
-            "One or more evidence backends failed; confidence is capped because "
-            "corroboration is incomplete."
-        )
-
-    # Incomplete backends: if only weak/slow-trace noise, prefer incomplete-evidence
-    # wording so we do not invent pool/gateway roots without logs.
+    # Incomplete backends: rewrite weak-only causes
     if pack.gather_errors and cause_bits:
         weak_only = all(
             "slow traces" in c.lower() or "error-pattern logs" in c.lower()
             for c in cause_bits
         )
-        if weak_only and err is not None and err >= 0.1:
-            cause_bits = [
-                f"elevated error rate on {service} with incomplete log evidence"
-            ]
+        if weak_only and err is not None and err >= err_elev:
+            fb = (catalog.fallbacks or {}).get("elevated_error") or {}
+            tmpl = fb.get("root_cause_incomplete_logs") or (
+                "elevated error rate on {service} with incomplete log evidence"
+            )
+            cause_bits = [tmpl.format(service=service)]
             why_bits.append(
-                "Loki (or other backends) failed during gather; metric elevation is "
-                "real but log corroboration is missing."
+                "Evidence gather reported backend failures; metric elevation is real "
+                "but log corroboration may be missing."
             )
             conf = min(max(conf, 45), 55)
             runbook = "elevated-http-error-rate"
             actions.append("Restore Loki and re-run RCA")
+
     if pack.gather_errors and not cause_bits:
+        fb = (catalog.fallbacks or {}).get("insufficient") or {}
+        tmpl = fb.get("root_cause_template") or (
+            "Insufficient evidence: cannot pin root cause for {service}"
+        )
         cause_bits.append(
-            f"Insufficient evidence: cannot pin root cause for {service}; "
-            f"observability backends incomplete"
+            tmpl.format(service=service) + "; observability backends incomplete"
         )
         why_bits.append(
             "Evidence gather reported backend failures; do not invent a concrete "
             "infra root without metrics/logs/traces."
         )
-        conf = min(conf, 35)
+        conf = min(conf, int(fb.get("base_confidence") or 30))
         actions.append("Restore Prom/Loki/Tempo and re-run RCA")
+        evidence.append("gather_errors: " + "; ".join(pack.gather_errors[:5]))
+    elif pack.gather_errors:
+        evidence.append("gather_errors: " + "; ".join(pack.gather_errors[:5]))
+        conf = min(conf, 40)
 
+    # --- Metric-only fallbacks (config thresholds) ---
     if not cause_bits:
-        if err is not None and err >= 0.1:
-            # Prefer wording that matches metric-only evaluation GTs
+        fb_err = (catalog.fallbacks or {}).get("elevated_error") or {}
+        fb_lat = (catalog.fallbacks or {}).get("elevated_latency") or {}
+        fb_ins = (catalog.fallbacks or {}).get("insufficient") or {}
+        if err is not None and err >= err_elev:
             if not pack.error_logs and not pack.neighbor_logs:
-                cause_bits.append(
-                    f"elevated http_error_rate on {service} with insufficient "
-                    f"log/trace corroboration"
+                tmpl = fb_err.get("root_cause_metric_only") or (
+                    "elevated http_error_rate on {service} with insufficient "
+                    "log/trace corroboration"
                 )
             else:
-                cause_bits.append(f"elevated http_error_rate={err:.4g} on {service}")
-            # Local elevated error when upstream healthy
+                tmpl = fb_err.get("root_cause_template") or (
+                    "elevated http_error_rate on {service}"
+                )
             pay = (pack.neighbor_metrics or {}).get("payment-service") or {}
-            pay_err = ((pay.get("instant") or {}).get("http_error_rate"))
+            pay_err = (pay.get("instant") or {}).get("http_error_rate")
             if (
                 pay_err is not None
-                and pay_err < 0.05
+                and float(pay_err) < 0.05
                 and "checkout" in service
-                and err >= 0.2
+                and err >= err_high
             ):
-                cause_bits = [
-                    f"elevated error rate on {service} (local) — payment upstream healthy"
-                ]
+                tmpl = fb_err.get("root_cause_local") or (
+                    "elevated error rate on {service} (local) — payment upstream healthy"
+                )
                 why_bits.append(
-                    "Payment neighbor is healthy; prefer local checkout fault over "
-                    "wrong-hop dependency blame."
+                    "Payment neighbor is healthy; prefer local fault over wrong-hop."
                 )
             else:
                 why_bits.append(
-                    f"Prometheus instant http_error_rate={err:.4g} exceeds 0.1 on {service}."
+                    f"Prometheus instant http_error_rate={err:.4g} exceeds "
+                    f"{err_elev} on {service}."
                 )
-            conf = max(conf, 50)
+            cause_bits.append(tmpl.format(service=service))
+            conf = max(conf, int(fb_err.get("base_confidence") or 50))
             runbook = "elevated-http-error-rate"
-            if "error" in str(inc.get("metric_name") or ""):
-                try:
-                    mv = float(inc["metric_value"])
-                    if mv >= 0.2:
-                        conf = max(conf, 55)
-                        actions.append(
-                            f"Check chaos/error injection on {service} (POST /chaos) and reset if demo"
-                        )
-                        actions.append(
-                            "Inspect upstream dependency health (payment vs checkout)"
-                        )
-                except (TypeError, ValueError, KeyError):
-                    pass
-        elif lat is not None and lat >= 0.5:
-            cause_bits.append(f"high latency p95={lat:.4g}s on {service}")
+            if err >= err_high:
+                conf = max(conf, 55)
+                actions.append(
+                    f"Check chaos/error injection on {service} and reset if demo"
+                )
+                actions.append("Inspect upstream dependency health via topology")
+        elif lat is not None and lat >= lat_elev:
+            tmpl = fb_lat.get("root_cause_template") or "high latency p95 on {service}"
+            cause_bits.append(tmpl.format(service=service) + f" p95={lat:.4g}s")
             why_bits.append(
-                f"Prometheus instant latency p95={lat:.4g}s is above 0.5s safety threshold."
+                f"Prometheus latency p95={lat:.4g}s above {lat_elev}s threshold."
             )
-            conf = max(conf, 45)
+            conf = max(conf, int(fb_lat.get("base_confidence") or 45))
             runbook = "latency-or-dependency-slowness"
         else:
+            tmpl = fb_ins.get("root_cause_template") or (
+                "Insufficient evidence: cannot pin root cause for {service}"
+            )
             cause_bits.append(
-                f"Insufficient evidence: cannot pin root cause for {service}; "
-                f"severity={inc.get('severity')}"
+                f"{tmpl.format(service=service)}; severity={inc.get('severity')}"
             )
             why_bits.append(
                 "Available metrics/logs/traces do not form a corroborated causal chain."
             )
-            conf = min(conf, 30)
-            actions.append("Re-run RCA after generating load so Prom/Loki/Tempo fill")
-
-    # Ticket metric high error without topology win already handled above
-    if (
-        not dep_hit
-        and inc.get("metric_name")
-        and "error" in str(inc.get("metric_name"))
-    ):
-        try:
-            mv = float(inc["metric_value"])
-            if mv >= 0.2 and not any("elevated error" in c.lower() for c in cause_bits):
-                # keep existing cause_bits; only boost conf
-                conf = max(conf, 55)
-        except (TypeError, ValueError, KeyError):
-            pass
+            conf = min(conf, int(fb_ins.get("base_confidence") or 30))
+            actions.append(
+                "Re-run RCA after generating load so Prom/Loki/Tempo fill"
+            )
 
     if not actions:
         actions = [
@@ -505,15 +380,15 @@ def rule_based_rca(pack: EvidencePack) -> RCAResult:
             "Verify Prometheus/Loki/Tempo have data in the incident window",
             "Inspect topology upstream dependencies for correlated errors",
             "Re-run POST /analyze-incident/{id}",
+            f"Pattern catalog: {catalog.path}",
         ]
 
     conf = int(max(5, min(75, conf)))
     why = " ".join(why_bits) if why_bits else (
-        "Rule-based heuristic selected the simplest hypothesis consistent with "
-        "available grounded metrics/logs/traces and service topology."
+        "Config-driven pattern match + topology selected the simplest hypothesis "
+        "consistent with grounded metrics/logs/traces."
     )
 
-    # De-dupe cause bits preserving order
     seen_c: set[str] = set()
     unique_causes: list[str] = []
     for c in cause_bits:
@@ -538,17 +413,23 @@ def _prefer_dependency_root(
     service: str,
     primary_err: Optional[float],
     primary_lat: Optional[float],
+    mcfg: dict[str, Any],
 ) -> Optional[dict[str, Any]]:
-    """
-    If an upstream neighbor is significantly sicker, return a preferred root.
-    """
     topo = pack.topology or {}
     hints = topo.get("rca_hints") or {}
     if hints.get("prefer_dependency_root_when_correlated") is False:
         return None
 
-    err_margin = float(hints.get("error_rate_neighbor_margin") or 0.05)
-    lat_margin = float(hints.get("latency_neighbor_margin_seconds") or 0.2)
+    err_margin = float(
+        hints.get("error_rate_neighbor_margin")
+        or mcfg.get("error_rate_neighbor_margin")
+        or 0.05
+    )
+    lat_margin = float(
+        hints.get("latency_neighbor_margin_seconds")
+        or mcfg.get("latency_neighbor_margin_seconds")
+        or 0.2
+    )
     upstream = set(topo.get("upstream") or [])
     if not upstream and not pack.neighbor_metrics:
         return None
@@ -559,7 +440,6 @@ def _prefer_dependency_root(
     for peer, body in (pack.neighbor_metrics or {}).items():
         rel = (body or {}).get("relation") or ""
         if peer not in upstream and rel != "upstream":
-            # Only prefer true upstream dependencies as root over the ticket service
             if peer not in upstream:
                 continue
         inst = (body or {}).get("instant") or {}
@@ -574,7 +454,7 @@ def _prefer_dependency_root(
                 score += pe * 10
                 reasons.append(
                     f"upstream {peer} error_rate={pe:.4g} exceeds primary "
-                    f"{service} error_rate={base:.4g} by ≥{err_margin}"
+                    f"{service} by ≥{err_margin}"
                 )
         if pl is not None:
             base_l = primary_lat if primary_lat is not None else 0.0
@@ -585,7 +465,6 @@ def _prefer_dependency_root(
                     f"by ≥{lat_margin}s"
                 )
 
-        # Neighbor logs mentioning faults on peer boost score
         peer_logs = [
             r
             for r in (pack.neighbor_logs or [])
@@ -593,41 +472,29 @@ def _prefer_dependency_root(
             or ((r.get("labels") or {}).get("service_name") == peer)
         ]
         blob = " ".join(str(r.get("line") or "") for r in peer_logs).lower()
-        log_boost = ""
-        if (
-            "connection pool" in blob
-            or "pool exhausted" in blob
-            or "maxpoolsize" in blob
-            or "could not obtain jdbc" in blob
-            or ("jdbc" in blob and "connection" in blob)
+        # Light boost from any neighbor error language (patterns refine later)
+        if any(
+            k in blob
+            for k in ("error", "timeout", "pool", "fail", "saturated", "lock")
         ):
-            score += 5
-            log_boost = f"{peer} database connection pool exhaustion"
-        elif "gateway timeout" in blob or "payment gateway" in blob:
-            score += 4
-            log_boost = "payment gateway timeout / dependency failure"
-        elif "cache miss" in blob:
-            score += 3
-            log_boost = f"{peer} high latency due to cache miss / cold redis keyspace"
+            score += 2
 
         if score <= best_score or score < 1.0:
             continue
 
-        root = log_boost or (
+        root = (
             f"elevated error rate on upstream dependency {peer} "
             f"(cascade symptoms on {service})"
         )
+        # If neighbor logs already name a concrete service fault, keep generic
+        # topology root; pattern matcher will refine from full log blob.
         best_score = score
         best = {
             "root_cause": root,
             "why": (
                 "Topology-aware correlation: "
                 + "; ".join(reasons)
-                + (
-                    f". Log signal on {peer}: {log_boost}."
-                    if log_boost
-                    else f". Prefer dependency root over symptom service {service}."
-                )
+                + f". Prefer dependency root over symptom service {service}."
             ),
             "confidence": min(72, 55 + int(score)),
             "runbook": "dependency-cascade",
@@ -653,8 +520,45 @@ def _service_hint_from_logs(logs: list[dict[str, Any]], fallback: str) -> str:
         if svc:
             return str(svc)
         line = (row.get("line") or "").lower()
-        if "payment-service" in line or "payment " in line:
+        for name in (
+            "fraud-service",
+            "inventory-service",
+            "payment-service",
+            "checkout-service",
+        ):
+            if name in line:
+                return name
+        if "payment " in line:
             return "payment-service"
-        if "checkout-service" in line or "checkout " in line:
+        if "checkout " in line:
             return "checkout-service"
+    return fallback
+
+
+def _service_from_matching_logs(
+    logs: list[dict[str, Any]],
+    phrases: list[str],
+    fallback: str,
+) -> str:
+    """Pick service from the log line that actually matched pattern phrases."""
+    phrases_l = [p.lower() for p in (phrases or []) if p]
+    if not phrases_l:
+        return fallback
+    for row in logs:
+        line = (row.get("line") or "").lower()
+        if not any(p in line for p in phrases_l):
+            continue
+        svc = row.get("neighbor_service") or (row.get("labels") or {}).get(
+            "service_name"
+        )
+        if svc:
+            return str(svc)
+        for name in (
+            "fraud-service",
+            "inventory-service",
+            "payment-service",
+            "checkout-service",
+        ):
+            if name in line:
+                return name
     return fallback
