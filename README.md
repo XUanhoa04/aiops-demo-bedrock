@@ -1,8 +1,11 @@
-# aiops-demo-bedrock
+# SentinelLoop
 
+**Explainable AIOps closed loop** — detect → confidence → decide → topology-aware RCA → remediate → learn.
+
+Repo: [`aiops-demo-bedrock`](https://github.com/XUanhoa04/aiops-demo-bedrock)  
 [![CI](https://github.com/XUanhoa04/aiops-demo-bedrock/actions/workflows/ci.yml/badge.svg)](https://github.com/XUanhoa04/aiops-demo-bedrock/actions/workflows/ci.yml)
 
-**Production-*like* AIOps closed-loop demo** for senior SRE / Platform / AIOps interviews  
+Production-*like* portfolio project for senior SRE / Platform / AIOps interviews  
 (honest trade-offs in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
 
 > Observability (OTel + Grafana LGTM) → **Explainable** hybrid anomaly detection →  
