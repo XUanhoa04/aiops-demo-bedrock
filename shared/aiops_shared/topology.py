@@ -210,7 +210,7 @@ def _builtin_catalog() -> dict[str, Any]:
             "checkout-service": {
                 "depends_on": ["payment-service", "inventory-service"],
                 "shared_deps": ["redis-cache", "postgres-orders"],
-                "aliases": ["checkout"],
+                "aliases": ["checkout", "aiops-checkout"],
             },
             "payment-service": {
                 "depends_on": ["fraud-service"],
@@ -219,17 +219,17 @@ def _builtin_catalog() -> dict[str, Any]:
                     "postgres-payments",
                     "payment-gateway",
                 ],
-                "aliases": ["payment"],
+                "aliases": ["payment", "aiops-payment"],
             },
             "inventory-service": {
                 "depends_on": [],
                 "shared_deps": ["postgres-inventory", "redis-cache"],
-                "aliases": ["inventory"],
+                "aliases": ["inventory", "aiops-inventory"],
             },
             "fraud-service": {
                 "depends_on": [],
                 "shared_deps": ["redis-cache"],
-                "aliases": ["fraud"],
+                "aliases": ["fraud", "aiops-fraud"],
             },
         },
         "shared_infrastructure": {

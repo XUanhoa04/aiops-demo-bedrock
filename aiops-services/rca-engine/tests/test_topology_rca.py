@@ -19,8 +19,12 @@ def test_catalog_checkout_upstream_payment():
     nb = cat.neighborhood("checkout")
     assert nb.service == "checkout-service"
     assert "payment-service" in nb.upstream
+    assert "inventory-service" in nb.upstream
     pay = cat.neighborhood("payment-service")
     assert "checkout-service" in pay.downstream
+    assert "fraud-service" in pay.upstream
+    fraud = cat.neighborhood("fraud-service")
+    assert "payment-service" in fraud.downstream
 
 
 def test_wrong_hop_prefers_payment_pool():

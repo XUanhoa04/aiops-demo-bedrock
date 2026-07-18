@@ -1,4 +1,4 @@
-"""Payment demo service — downstream of checkout, chaos-controllable."""
+"""Inventory demo service — stock reserve dependency of checkout."""
 
 from __future__ import annotations
 
@@ -9,9 +9,7 @@ import random
 import time
 from contextlib import asynccontextmanager
 from typing import Any
-from uuid import uuid4
 
-import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -22,23 +20,22 @@ from aiops_shared.otel import setup_otel
 setup_logging()
 logger = logging.getLogger(__name__)
 
-SERVICE_NAME = os.getenv("SERVICE_NAME", "payment-service")
-PORT = int(os.getenv("PORT", "8081"))
-FRAUD_URL = os.getenv("FRAUD_URL", "http://fraud-service:8083")
+SERVICE_NAME = os.getenv("SERVICE_NAME", "inventory-service")
+PORT = int(os.getenv("PORT", "8082"))
 
 _state: dict[str, Any] = {
     "error_rate": float(os.getenv("ERROR_RATE", "0.01")),
-    "base_latency_ms": float(os.getenv("BASE_LATENCY_MS", "80")),
+    "base_latency_ms": float(os.getenv("BASE_LATENCY_MS", "40")),
     "extra_latency_ms": 0.0,
-    # none | db_pool | gateway_timeout | redis_cache_miss
+    # none | stock_lock | db_pool | cache_miss
     "fault_mode": os.getenv("FAULT_MODE", "none"),
 }
 
 _FAULT_MESSAGES = {
-    "db_pool": "payment-service database connection pool exhaustion",
-    "gateway_timeout": "payment gateway timeout (injected)",
-    "redis_cache_miss": "redis cache miss — cold card-token lookup path",
-    "none": "payment gateway timeout (injected)",
+    "stock_lock": "inventory stock lock wait timeout sku locks exhausted",
+    "db_pool": "inventory-service database connection pool exhaustion",
+    "cache_miss": "inventory redis cache miss — cold stock keyspace",
+    "none": "inventory reserve failed",
 }
 
 
@@ -71,14 +68,14 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Payment Service", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Inventory Service", version="0.1.0", lifespan=lifespan)
 setup_otel(SERVICE_NAME, app=app)
 
 
-class PayRequest(BaseModel):
+class ReserveRequest(BaseModel):
     order_id: str
-    amount: float = Field(gt=0)
-    currency: str = "USD"
+    sku: str = "SKU-DEMO"
+    qty: int = Field(default=1, ge=1)
 
 
 class ChaosConfig(BaseModel):
@@ -86,8 +83,7 @@ class ChaosConfig(BaseModel):
     base_latency_ms: float | None = Field(default=None, ge=0)
     extra_latency_ms: float | None = Field(default=None, ge=0)
     fault_mode: str | None = Field(
-        default=None,
-        description="none|db_pool|gateway_timeout|redis_cache_miss",
+        default=None, description="none|stock_lock|db_pool|cache_miss"
     )
 
 
@@ -121,58 +117,14 @@ def set_chaos(cfg: ChaosConfig) -> dict:
     return _state
 
 
-@app.post("/pay")
-async def pay(body: PayRequest) -> dict:
+@app.post("/reserve")
+async def reserve(body: ReserveRequest) -> dict:
     start = time.perf_counter()
-    attrs = {"service_name": SERVICE_NAME, "http_route": "/pay"}
+    attrs = {"service_name": SERVICE_NAME, "http_route": "/reserve"}
 
     delay_ms = _state["base_latency_ms"] + _state["extra_latency_ms"]
     delay_ms += random.uniform(0, delay_ms * 0.25)
     await asyncio.sleep(delay_ms / 1000.0)
-
-    # Upstream fraud score (topology: payment → fraud)
-    fraud_body: dict[str, Any] = {}
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            fr = await client.post(
-                f"{FRAUD_URL.rstrip('/')}/score",
-                json={
-                    "order_id": body.order_id,
-                    "amount": body.amount,
-                    "currency": body.currency,
-                },
-            )
-            if not fr.is_success:
-                elapsed = (time.perf_counter() - start) * 1000
-                req_counter.add(1, {**attrs, "status": "error"})
-                err_counter.add(1, {**attrs, "reason": "fraud"})
-                duration_hist.record(elapsed, {**attrs, "status": "error"})
-                detail = fr.text[:200] if fr.text else f"status={fr.status_code}"
-                logger.error(
-                    "payment blocked: fraud dependency unhealthy order_id=%s detail=%s",
-                    body.order_id,
-                    detail,
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"fraud dependency unhealthy: {detail}",
-                )
-            fraud_body = fr.json()
-    except HTTPException:
-        raise
-    except Exception as exc:
-        elapsed = (time.perf_counter() - start) * 1000
-        req_counter.add(1, {**attrs, "status": "error"})
-        err_counter.add(1, {**attrs, "reason": "fraud_transport"})
-        duration_hist.record(elapsed, {**attrs, "status": "error"})
-        logger.error(
-            "payment blocked: fraud dependency unhealthy order_id=%s err=%s",
-            body.order_id,
-            exc,
-        )
-        raise HTTPException(
-            status_code=502, detail=f"fraud dependency unhealthy: {exc}"
-        ) from exc
 
     if random.random() < _state["error_rate"]:
         elapsed = (time.perf_counter() - start) * 1000
@@ -182,22 +134,22 @@ async def pay(body: PayRequest) -> dict:
         mode = str(_state.get("fault_mode") or "none")
         detail = _FAULT_MESSAGES.get(mode, _FAULT_MESSAGES["none"])
         logger.error(
-            "payment failure fault_mode=%s detail=%s order_id=%s",
+            "inventory failure fault_mode=%s detail=%s order_id=%s sku=%s",
             mode,
             detail,
             body.order_id,
+            body.sku,
         )
-        raise HTTPException(status_code=502, detail=detail)
+        raise HTTPException(status_code=503, detail=detail)
 
     elapsed = (time.perf_counter() - start) * 1000
     req_counter.add(1, {**attrs, "status": "ok"})
     duration_hist.record(elapsed, {**attrs, "status": "ok"})
     return {
-        "payment_id": str(uuid4()),
+        "reservation_id": f"res-{body.order_id}",
         "order_id": body.order_id,
-        "amount": body.amount,
-        "currency": body.currency,
-        "status": "captured",
-        "fraud": fraud_body,
+        "sku": body.sku,
+        "qty": body.qty,
+        "status": "reserved",
         "latency_ms": round(elapsed, 2),
     }

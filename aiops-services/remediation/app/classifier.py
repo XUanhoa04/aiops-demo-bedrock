@@ -45,7 +45,8 @@ _LOW_PATTERNS: list[tuple[re.Pattern[str], ActionType]] = [
 ]
 
 _SERVICE_RE = re.compile(
-    r"\b(checkout-service|payment-service|checkout|payment|aiops-[\w-]+)\b",
+    r"\b(checkout-service|payment-service|inventory-service|fraud-service|"
+    r"checkout|payment|inventory|fraud|aiops-[\w-]+)\b",
     re.I,
 )
 _REPLICAS_RE = re.compile(r"\b(?:to\s+|replicas?\s*[=:]?\s*)(\d{1,3})\b", re.I)
@@ -59,6 +60,10 @@ def _normalize_service(raw: Optional[str], fallback: str = "") -> str:
         return "checkout-service"
     if s in ("payment", "payment-service", "aiops-payment"):
         return "payment-service"
+    if s in ("inventory", "inventory-service", "aiops-inventory"):
+        return "inventory-service"
+    if s in ("fraud", "fraud-service", "aiops-fraud"):
+        return "fraud-service"
     return s
 
 

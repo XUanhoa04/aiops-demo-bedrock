@@ -20,7 +20,7 @@
 # =============================================================================
 
 version: "1.0"
-description: "AIOps demo topology — checkout depends on payment"
+description: "AIOps demo topology — checkout→{payment,inventory}; payment→fraud"
 
 # Canonical service graph (caller → callee)
 # Expanded beyond a 2-node toy so multi-hop / shared-infra RCA is interviewable.

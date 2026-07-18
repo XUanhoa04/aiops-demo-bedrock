@@ -33,7 +33,8 @@ class Settings(BaseSettings):
     docker_host: str = ""  # e.g. unix:///var/run/docker.sock
     # Map logical service → docker compose container name
     container_map_json: str = (
-        '{"checkout-service":"aiops-checkout","payment-service":"aiops-payment"}'
+        '{"checkout-service":"aiops-checkout","payment-service":"aiops-payment",'
+        '"inventory-service":"aiops-inventory","fraud-service":"aiops-fraud"}'
     )
 
     # Default actor identity recorded in history

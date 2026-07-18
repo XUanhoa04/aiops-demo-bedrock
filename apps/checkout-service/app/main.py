@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 SERVICE_NAME = os.getenv("SERVICE_NAME", "checkout-service")
 PORT = int(os.getenv("PORT", "8080"))
 PAYMENT_URL = os.getenv("PAYMENT_URL", "http://payment-service:8081")
+INVENTORY_URL = os.getenv("INVENTORY_URL", "http://inventory-service:8082")
 
 # Mutable runtime chaos state (also seeded from env).
 # fault_mode adds production-like error messages for logs/traces evaluation demos.
@@ -184,10 +185,49 @@ async def checkout(body: CheckoutRequest) -> dict:
         )
         raise HTTPException(status_code=503, detail=detail)
 
-    # Downstream payment call (distributed trace)
-    payment_status = "skipped"
+    # Topology hop 1: inventory reserve (distributed trace)
+    inventory_body: dict[str, Any] = {}
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
+            inv = await client.post(
+                f"{INVENTORY_URL.rstrip('/')}/reserve",
+                json={
+                    "order_id": body.order_id,
+                    "sku": "SKU-DEMO",
+                    "qty": 1,
+                },
+            )
+            if not inv.is_success:
+                elapsed = (time.perf_counter() - start) * 1000
+                req_counter.add(1, {**attrs, "status": "error"})
+                err_counter.add(1, {**attrs, "reason": "inventory"})
+                duration_hist.record(elapsed, {**attrs, "status": "error"})
+                detail = inv.text[:200] if inv.text else f"status={inv.status_code}"
+                logger.error(
+                    "inventory reserve failed order_id=%s detail=%s",
+                    body.order_id,
+                    detail,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"inventory reserve failed: {detail}",
+                )
+            inventory_body = inv.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        elapsed = (time.perf_counter() - start) * 1000
+        req_counter.add(1, {**attrs, "status": "error"})
+        err_counter.add(1, {**attrs, "reason": "inventory_transport"})
+        duration_hist.record(elapsed, {**attrs, "status": "error"})
+        raise HTTPException(
+            status_code=502, detail=f"inventory error: {exc}"
+        ) from exc
+
+    # Topology hop 2: payment (which itself may call fraud)
+    payment_status = "skipped"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.post(
                 f"{PAYMENT_URL.rstrip('/')}/pay",
                 json={
@@ -202,9 +242,10 @@ async def checkout(body: CheckoutRequest) -> dict:
                 req_counter.add(1, {**attrs, "status": "error"})
                 err_counter.add(1, {**attrs, "reason": "payment"})
                 duration_hist.record(elapsed, {**attrs, "status": "error"})
+                detail = resp.text[:200] if resp.text else f"status={resp.status_code}"
                 raise HTTPException(
                     status_code=502,
-                    detail=f"payment failed: {resp.status_code}",
+                    detail=f"payment failed: {detail}",
                 )
             payment_body = resp.json()
     except HTTPException:
@@ -222,6 +263,7 @@ async def checkout(body: CheckoutRequest) -> dict:
     return {
         "order_id": body.order_id,
         "status": "confirmed",
+        "inventory": inventory_body,
         "payment": payment_body,
         "latency_ms": round(elapsed, 2),
         "payment_status": payment_status,

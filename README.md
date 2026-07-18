@@ -81,7 +81,7 @@ python docs/generate_architecture_diagram.py
 
 ```mermaid
 flowchart TD
-  Apps[checkout / payment OTel] --> LGTM[LGTM Prom Loki Tempo]
+  Apps[checkout inventory payment fraud OTel] --> LGTM[LGTM Prom Loki Tempo]
   LGTM --> Det[anomaly-detector hybrid + confidence]
   Det -->|Redis anomalies| IM[incident-manager tickets + UI]
   IM -->|policy only| DE[decision-engine]
@@ -178,7 +178,8 @@ UI: http://localhost:8503 · API: `POST /qa/reviews`, `GET /qa/metrics`, `GET /q
 | OTLP | 4317 / 4318 | Prefer HTTP 4318 for demos |
 | Prometheus | 9090 | PromQL source for detector + RCA |
 | Loki / Tempo | 3100 / 3200 | Evidence + deep-links |
-| checkout / payment | 8080 / 8081 | Chaos-capable demo apps |
+| checkout / payment | 8080 / 8081 | Demo apps (entry + pay) |
+| inventory / fraud | 8082 / 8083 | Topology deps of checkout / payment |
 | anomaly-detector | 8001 | `/detect`, `/metrics` |
 | incident-manager | **8002** | Console + tickets |
 | rca-engine | 8003 | `/analyze-incident/{id}` |

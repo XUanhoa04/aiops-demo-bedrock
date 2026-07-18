@@ -88,36 +88,59 @@ services:
       - aiops-net
 
   # ---------------------------------------------------------------------------
-  # Demo apps (lightweight stand-in for full OpenTelemetry Demo)
-  # Full otel-demo is multi-GB and slow on laptops; these two services emit
-  # realistic RED metrics + traces and support chaos injection via env/API.
+  # Demo apps — 4-service topology (still laptop-friendly)
+  #   checkout → inventory
+  #   checkout → payment → fraud
+  # Chaos via POST /chaos; OTLP to lgtm:4318.
+  # For full OTel Astronomy Shop, see docs/OTEL_DEMO.md (optional).
   # ---------------------------------------------------------------------------
-  checkout-service:
+  inventory-service:
     build:
       context: .
-      dockerfile: apps/checkout-service/Dockerfile
-    container_name: aiops-checkout
+      dockerfile: apps/inventory-service/Dockerfile
+    container_name: aiops-inventory
     environment:
       <<: *otel-env
-      OTEL_SERVICE_NAME: checkout-service
-      SERVICE_NAME: checkout-service
-      PORT: "8080"
-      PAYMENT_URL: http://payment-service:8081
-      ERROR_RATE: ${CHECKOUT_ERROR_RATE:-0.02}
-      BASE_LATENCY_MS: ${CHECKOUT_BASE_LATENCY_MS:-50}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      OTEL_SERVICE_NAME: inventory-service
+      SERVICE_NAME: inventory-service
+      PORT: "8082"
+      ERROR_RATE: ${INVENTORY_ERROR_RATE:-0.01}
+      BASE_LATENCY_MS: ${INVENTORY_BASE_LATENCY_MS:-40}
     ports:
-      - "8080:8080"
+      - "8082:8082"
     depends_on:
-      # Apps fail-open if OTLP is briefly unavailable; don't block on full LGTM ready.
       lgtm:
         condition: service_started
-      payment-service:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  fraud-service:
+    build:
+      context: .
+      dockerfile: apps/fraud-service/Dockerfile
+    container_name: aiops-fraud
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: fraud-service
+      SERVICE_NAME: fraud-service
+      PORT: "8083"
+      ERROR_RATE: ${FRAUD_ERROR_RATE:-0.01}
+      BASE_LATENCY_MS: ${FRAUD_BASE_LATENCY_MS:-30}
+    ports:
+      - "8083:8083"
+    depends_on:
+      lgtm:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8083/health')"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -137,6 +160,7 @@ services:
       OTEL_SERVICE_NAME: payment-service
       SERVICE_NAME: payment-service
       PORT: "8081"
+      FRAUD_URL: http://fraud-service:8083
       ERROR_RATE: ${PAYMENT_ERROR_RATE:-0.01}
       BASE_LATENCY_MS: ${PAYMENT_BASE_LATENCY_MS:-80}
     ports:
@@ -144,8 +168,47 @@ services:
     depends_on:
       lgtm:
         condition: service_started
+      fraud-service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - aiops-net
+
+  checkout-service:
+    build:
+      context: .
+      dockerfile: apps/checkout-service/Dockerfile
+    container_name: aiops-checkout
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: checkout-service
+      SERVICE_NAME: checkout-service
+      PORT: "8080"
+      PAYMENT_URL: http://payment-service:8081
+      INVENTORY_URL: http://inventory-service:8082
+      ERROR_RATE: ${CHECKOUT_ERROR_RATE:-0.02}
+      BASE_LATENCY_MS: ${CHECKOUT_BASE_LATENCY_MS:-50}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    ports:
+      - "8080:8080"
+    depends_on:
+      lgtm:
+        condition: service_started
+      payment-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -185,7 +248,7 @@ services:
       HYBRID_VOTE: ${HYBRID_VOTE:-any}
       ERROR_RATE_THRESHOLD: ${ERROR_RATE_THRESHOLD:-0.15}
       LATENCY_P95_SECONDS_THRESHOLD: ${LATENCY_P95_SECONDS_THRESHOLD:-0.8}
-      WATCHED_SERVICES: ${WATCHED_SERVICES:-checkout-service,payment-service}
+      WATCHED_SERVICES: ${WATCHED_SERVICES:-checkout-service,payment-service,inventory-service,fraud-service}
       ENABLE_CONTEXT_GATHER: ${ENABLE_CONTEXT_GATHER:-true}
       CONTEXT_WINDOW_MINUTES: ${CONTEXT_WINDOW_MINUTES:-10}
       # Confidence engine weights (normalized at runtime) — metrics/traces/logs/events

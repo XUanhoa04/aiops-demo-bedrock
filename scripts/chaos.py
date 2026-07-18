@@ -19,6 +19,8 @@ import urllib.request
 SERVICES = {
     "checkout": "http://localhost:8080",
     "payment": "http://localhost:8081",
+    "inventory": "http://localhost:8082",
+    "fraud": "http://localhost:8083",
 }
 
 
@@ -43,19 +45,28 @@ def main() -> int:
     p.add_argument(
         "--fault-mode",
         default=None,
-        help="none|db_pool|cache_miss|dependency_timeout|cpu_throttle|gateway_timeout|redis_cache_miss",
+        help=(
+            "none|db_pool|cache_miss|dependency_timeout|cpu_throttle|"
+            "gateway_timeout|redis_cache_miss|stock_lock|scoring_timeout"
+        ),
     )
     p.add_argument(
         "--reset",
         action="store_true",
-        help="Reset both services to healthy baseline",
+        help="Reset all demo services to healthy baseline",
     )
     args = p.parse_args()
 
     if args.reset:
+        defaults = {
+            "checkout": 0.02,
+            "payment": 0.01,
+            "inventory": 0.01,
+            "fraud": 0.01,
+        }
         for name, url in SERVICES.items():
             body = {
-                "error_rate": 0.01 if name == "payment" else 0.02,
+                "error_rate": defaults.get(name, 0.01),
                 "extra_latency_ms": 0,
                 "fault_mode": "none",
             }

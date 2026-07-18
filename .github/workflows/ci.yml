@@ -61,6 +61,8 @@ jobs:
           pytest -q aiops-services/rca-engine/tests
           export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/remediation"
           pytest -q aiops-services/remediation/tests
+          export PYTHONPATH="$ROOT/shared"
+          pytest -q apps/tests
 
       - name: Offline anomaly evaluation (gate overall F1 ≥ 0.70, core F1 ≥ 0.75)
         env:
