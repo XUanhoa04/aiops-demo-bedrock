@@ -1,16 +1,19 @@
 # Convenience targets for local demo + CI-equivalent checks.
-# Windows: use `make` via Git Bash / WSL, or run the underlying commands.
+# Windows: use `make` via Git Bash / WSL, or run the underlying commands with py -3.11.
 
-.PHONY: help up down wait demo eval test ci baselines lint-compose
+.PHONY: help up down wait demo eval eval-compare eval-live test ci baselines lint-compose report
 
 help:
 	@echo "Targets:"
-	@echo "  make up          - docker compose up -d --build"
-	@echo "  make wait        - wait_for_stack.sh"
-	@echo "  make demo        - one-shot demo (stack must be up)"
-	@echo "  make eval        - offline anomaly + RCA + baselines"
-	@echo "  make test        - unit tests"
-	@echo "  make ci          - compose config + test + eval (local CI)"
+	@echo "  make up            - docker compose up -d --build"
+	@echo "  make wait          - wait_for_stack.sh"
+	@echo "  make demo          - one-shot demo (stack must be up)"
+	@echo "  make eval          - offline anomaly + RCA + baselines + summary"
+	@echo "  make eval-compare  - offline eval + rule vs Bedrock compare"
+	@echo "  make eval-live     - live e2e (stack up): chaos → RCA score"
+	@echo "  make report        - print evaluation/results summary"
+	@echo "  make test          - unit tests"
+	@echo "  make ci            - compose config + test + eval"
 
 up:
 	docker compose up -d --build
@@ -26,7 +29,19 @@ demo: wait
 
 eval:
 	bash scripts/run-evaluation.sh
-	python evaluation/evaluate_baselines.py --require-beats-baselines || python evaluation/evaluate_baselines.py
+
+eval-compare:
+	bash scripts/run-evaluation.sh --compare
+
+eval-live:
+	python evaluation/evaluate_live_e2e.py --limit 5 --split core
+	python evaluation/report_summary.py
+
+report:
+	python evaluation/report_summary.py
+
+baselines:
+	python evaluation/evaluate_baselines.py --require-beats-baselines
 
 test:
 	PYTHONPATH=shared:aiops-services/anomaly-detector pytest -q aiops-services/anomaly-detector/tests

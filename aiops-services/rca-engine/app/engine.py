@@ -67,6 +67,7 @@ class RCAEngine:
         *,
         persist: bool = True,
         force: bool = False,
+        force_rule_based: bool = False,
     ) -> AnalyzeResponse:
         try:
             incident = self.incidents.get_incident(incident_id)
@@ -111,7 +112,9 @@ class RCAEngine:
             )
 
         pack = self.gatherer.gather(incident)
-        result, mode, bedrock_error, llm_usage = self._run_model(pack)
+        result, mode, bedrock_error, llm_usage = self._run_model(
+            pack, force_rule_based=force_rule_based
+        )
 
         # Prefer model/rule-selected trace, else pack primary
         primary_trace_id = (
@@ -259,19 +262,27 @@ class RCAEngine:
             )
 
     def _run_model(
-        self, pack: EvidencePack
+        self,
+        pack: EvidencePack,
+        *,
+        force_rule_based: bool = False,
     ) -> tuple[RCAResult, str, Optional[str], Optional[LLMUsage]]:
         """
         Returns (result, mode, bedrock_error, llm_usage).
 
         Fallback triggers:
-          1. FORCE_RULE_BASED
+          1. FORCE_RULE_BASED env or force_rule_based=True (eval / ops)
           2. missing AWS credentials
           3. Bedrock exception
           4. Bedrock confidence < min_bedrock_confidence (use rules if better)
         """
-        if settings.force_rule_based:
-            return rule_based_rca(pack), "rule_based", "force_rule_based=true", None
+        if settings.force_rule_based or force_rule_based:
+            return (
+                rule_based_rca(pack),
+                "rule_based",
+                "force_rule_based=true",
+                None,
+            )
 
         if not self.bedrock.configured:
             logger.warning("Bedrock not configured — using rule-based RCA")

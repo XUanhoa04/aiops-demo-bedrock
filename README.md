@@ -21,7 +21,8 @@ python scripts/demo_one_shot.py   # recommended one-shot path
 ```
 
 Without AWS keys, RCA still runs via **rule-based fallback** (safety over silence).  
-Offline quality gates (no Docker required for unit/eval): `bash scripts/run-evaluation.sh` or `make ci`.
+Offline quality gates (no Docker required for unit/eval): `bash scripts/run-evaluation.sh` or `make ci`.  
+Full eval guide: [`docs/EVALUATION.md`](docs/EVALUATION.md) · summary: `python evaluation/report_summary.py`.
 
 ---
 

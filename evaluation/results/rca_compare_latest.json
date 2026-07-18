@@ -1,0 +1,565 @@
+{
+  "generated_at": "2026-07-18T15:56:43.977251+00:00",
+  "dataset": [
+    "D:\\project\\aiops-demo-bedrock\\evaluation\\rca_scenarios.yaml"
+  ],
+  "split_filter": "all",
+  "pattern_catalog": {
+    "path": "D:\\project\\aiops-demo-bedrock\\config\\rca_patterns.yaml",
+    "version": "1.0",
+    "n_patterns": 7,
+    "pattern_ids": [
+      "db_pool",
+      "cache_miss",
+      "payment_gateway",
+      "cpu_saturation",
+      "fraud_scoring",
+      "inventory_lock",
+      "post_deploy"
+    ],
+    "sha256": "a1b47ae161f0079daee4852c5649324e4791ad7ea7a08c353c6237e0b34fb72d"
+  },
+  "by_engine": {
+    "rule_based": {
+      "n": 40,
+      "correct": 40,
+      "accuracy": 1.0
+    },
+    "bedrock": {
+      "n": 40,
+      "correct": 26,
+      "accuracy": 0.65
+    }
+  },
+  "agreement_rate": 0.225,
+  "agreement_n": 40,
+  "bedrock_meta": {
+    "configured": true,
+    "error": null
+  },
+  "rule_rows": [
+    {
+      "scenario_id": "rca-01-payment-db-pool",
+      "correct": true,
+      "predicted": "payment-service database connection pool exhaustion; elevated error rate on upstream dependency checkout-service (cascade symptoms on payment-service)",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-02-checkout-db-pool",
+      "correct": true,
+      "predicted": "checkout-service database connection pool exhaustion",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-03-payment-gateway-timeout",
+      "correct": true,
+      "predicted": "payment gateway timeout / dependency failure",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-04-checkout-cache-miss",
+      "correct": true,
+      "predicted": "checkout-service high latency due to cache miss / cold redis keyspace",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-05-payment-redis-cache",
+      "correct": true,
+      "predicted": "payment-service high latency due to cache miss / cold redis keyspace",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-06-checkout-cpu-throttle",
+      "correct": true,
+      "predicted": "checkout-service worker/thread pool saturation or CPU throttle",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-07-cascade-payment-to-checkout",
+      "correct": true,
+      "predicted": "payment-service database connection pool exhaustion; elevated error rate on upstream dependency checkout-service (cascade symptoms on payment-service)",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-08-traffic-spike-only",
+      "correct": true,
+      "predicted": "Insufficient evidence: cannot pin root cause for checkout-service; severity=high",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-09-payment-high-error-generic",
+      "correct": true,
+      "predicted": "payment gateway timeout / dependency failure",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-10-checkout-dependency-timeout",
+      "correct": true,
+      "predicted": "payment gateway timeout / dependency failure",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-11-partial-evidence-pool",
+      "correct": true,
+      "predicted": "payment-service database connection pool exhaustion",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-12-noisy-logs-latency",
+      "correct": true,
+      "predicted": "checkout-service high latency due to cache miss / cold redis keyspace",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-13-wrong-hop-checkout-symptom",
+      "correct": true,
+      "predicted": "payment-service database connection pool exhaustion; elevated error rate on upstream dependency payment-service (cascade symptoms on checkout-service)",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-14-wrong-hop-gateway",
+      "correct": true,
+      "predicted": "payment gateway timeout / dependency failure; elevated error rate on upstream dependency payment-service (cascade symptoms on checkout-service)",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-15-local-root-not-upstream",
+      "correct": true,
+      "predicted": "checkout-service database connection pool exhaustion",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-16-paraphrase-pool",
+      "correct": true,
+      "predicted": "payment-service database connection pool exhaustion; elevated error rate on upstream dependency payment-service (cascade symptoms on checkout-service)",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-17-paraphrase-cache",
+      "correct": true,
+      "predicted": "checkout-service high latency due to cache miss / cold redis keyspace",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-18-fraud-multi-hop",
+      "correct": true,
+      "predicted": "fraud-service latency / scoring saturation cascading into payment and checkout; elevated error rate on upstream dependency fraud-service (cascade symptoms on checkout-service)",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-19-inventory-stock-lock",
+      "correct": true,
+      "predicted": "inventory-service stock lock / DB contention causing checkout latency; elevated error rate on upstream dependency inventory-service (cascade symptoms on checkout-service)",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-20-shared-redis-blast",
+      "correct": true,
+      "predicted": "shared redis-cache miss storm / cold keyspace affecting checkout and payment",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-21-gather-errors-loki-down",
+      "correct": true,
+      "predicted": "elevated error rate on payment-service with incomplete log evidence",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-22-metric-only-high-error",
+      "correct": true,
+      "predicted": "elevated http_error_rate on checkout-service with insufficient log/trace corroboration",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-23-conflicting-signals",
+      "correct": true,
+      "predicted": "elevated error rate on checkout-service (local) \u2014 payment upstream healthy",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-24-deploy-change-correlated",
+      "correct": true,
+      "predicted": "payment-service post-deploy regression / bad release correlated with error spike",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-25-dual-fault-primary-pool",
+      "correct": true,
+      "predicted": "payment-service database connection pool exhaustion; elevated error rate on upstream dependency payment-service (cascade symptoms on checkout-service)",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-26-paraphrase-gateway",
+      "correct": true,
+      "predicted": "payment gateway timeout / dependency failure",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-27-paraphrase-cpu",
+      "correct": true,
+      "predicted": "checkout-service worker/thread pool saturation or CPU throttle",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-28-paraphrase-dependency",
+      "correct": true,
+      "predicted": "payment gateway timeout / dependency failure; elevated error rate on upstream dependency payment-service (cascade symptoms on checkout-service)",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-29-empty-evidence-insufficient",
+      "correct": true,
+      "predicted": "Insufficient evidence: cannot pin root cause for checkout-service; observability backends incomplete",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-30-payment-only-mild-noise",
+      "correct": true,
+      "predicted": "Insufficient evidence: cannot pin root cause for payment-service; severity=high",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-31-hikari-pool-paraphrase",
+      "correct": true,
+      "predicted": "payment-service database connection pool exhaustion",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-32-too-many-connections",
+      "correct": true,
+      "predicted": "payment-service database connection pool exhaustion; elevated error rate on upstream dependency payment-service (cascade symptoms on checkout-service)",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-33-cache-cold-path",
+      "correct": true,
+      "predicted": "checkout-service high latency due to cache miss / cold redis keyspace",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-34-fraud-only-ticket-payment",
+      "correct": true,
+      "predicted": "fraud-service latency / scoring saturation cascading into payment and checkout; elevated error rate on upstream dependency fraud-service (cascade symptoms on payment-service)",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-35-inventory-only-metrics-logs",
+      "correct": true,
+      "predicted": "inventory-service stock lock / DB contention causing checkout latency; elevated error rate on upstream dependency inventory-service (cascade symptoms on checkout-service)",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-36-rollback-change-event",
+      "correct": true,
+      "predicted": "checkout-service post-deploy regression / bad release correlated with error spike",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-37-metric-only-payment",
+      "correct": true,
+      "predicted": "elevated http_error_rate on payment-service with insufficient log/trace corroboration",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-38-no-fault-low-error",
+      "correct": true,
+      "predicted": "Insufficient evidence: cannot pin root cause for checkout-service; severity=high",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-39-both-backends-partial",
+      "correct": true,
+      "predicted": "payment gateway timeout / dependency failure",
+      "mode": "rule_based"
+    },
+    {
+      "scenario_id": "rca-40-shared-redis-synonym",
+      "correct": true,
+      "predicted": "shared redis-cache miss storm / cold keyspace affecting checkout and payment",
+      "mode": "rule_based"
+    }
+  ],
+  "bedrock_rows": [
+    {
+      "scenario_id": "rca-01-payment-db-pool",
+      "correct": true,
+      "predicted": "Payment-service database connection pool exhaustion",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-02-checkout-db-pool",
+      "correct": false,
+      "predicted": "Checkout's own order DB pool exhaustion",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-03-payment-gateway-timeout",
+      "correct": true,
+      "predicted": "External payment gateway timeouts causing elevated payment-service latency and errors",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-04-checkout-cache-miss",
+      "correct": true,
+      "predicted": "Checkout service latency caused by cache miss storm on redis-cache",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-05-payment-redis-cache",
+      "correct": true,
+      "predicted": "Payment service latency spikes due to Redis cache cold path misses",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-06-checkout-cpu-throttle",
+      "correct": false,
+      "predicted": "Checkout service CPU throttling under traffic spike",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-07-cascade-payment-to-checkout",
+      "correct": true,
+      "predicted": "Payment-service database connection pool exhaustion",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-08-traffic-spike-only",
+      "correct": true,
+      "predicted": "Benign traffic spike \u2014 elevated RPS, mild latency, low errors (no true RCA).",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-09-payment-high-error-generic",
+      "correct": true,
+      "predicted": "Payment-service errors driven by payment-gateway timeouts",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-10-checkout-dependency-timeout",
+      "correct": false,
+      "predicted": "Checkout service marks dependency timeout due to payment-service latency/timeouts",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-11-partial-evidence-pool",
+      "correct": true,
+      "predicted": "Connection pool exhaustion in payment-service",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-12-noisy-logs-latency",
+      "correct": true,
+      "predicted": "Checkout latency driven by Redis cache miss (cold keyspace)",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-13-wrong-hop-checkout-symptom",
+      "correct": true,
+      "predicted": "Payment-service database connection pool exhaustion",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-14-wrong-hop-gateway",
+      "correct": false,
+      "predicted": "Checkout latency/errors driven by payment-service timeouts (payment-service has higher error_rate=0.4 and latency=2.5s, matching checkout logs)",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-15-local-root-not-upstream",
+      "correct": false,
+      "predicted": "Checkout service DB pool exhaustion",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-16-paraphrase-pool",
+      "correct": false,
+      "predicted": "Checkout service errors driven by payment service database pool saturation",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-17-paraphrase-cache",
+      "correct": true,
+      "predicted": "Checkout service latency due to Redis cache miss storm",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-18-fraud-multi-hop",
+      "correct": true,
+      "predicted": "Fraud-service errors causing payment-service failures which cascade to checkout-service",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-19-inventory-stock-lock",
+      "correct": true,
+      "predicted": "Inventory service stock lock timeouts causing checkout service latency spikes",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-20-shared-redis-blast",
+      "correct": true,
+      "predicted": "Shared redis cache miss latency affecting checkout-service and payment-service",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-21-gather-errors-loki-down",
+      "correct": true,
+      "predicted": "Partial observability due to Loki down; elevated payment-service http_error_rate=0.4",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-22-metric-only-high-error",
+      "correct": false,
+      "predicted": "Insufficient evidence: checkout-service http_error_rate=0.45 but no logs/traces/neighbor metrics to pinpoint root cause",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-23-conflicting-signals",
+      "correct": false,
+      "predicted": "Checkout service local error before payment call (checkout-service error log and trace indicate local issue)",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-24-deploy-change-correlated",
+      "correct": true,
+      "predicted": "Deploy of payment-service v2.14.0 correlates with error spike (payment failure after release NPE in FeeCalculator)",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-25-dual-fault-primary-pool",
+      "correct": true,
+      "predicted": "payment-service database connection pool exhaustion",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-26-paraphrase-gateway",
+      "correct": false,
+      "predicted": "PSP provider deadline exceeded due to slow PSP call",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-27-paraphrase-cpu",
+      "correct": false,
+      "predicted": "Checkout service run queue full due to high request volume",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-28-paraphrase-dependency",
+      "correct": true,
+      "predicted": "payment-service timeouts causing checkout-service client timeouts",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-29-empty-evidence-insufficient",
+      "correct": true,
+      "predicted": "Insufficient evidence: no metrics, logs, traces, or change events available",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-30-payment-only-mild-noise",
+      "correct": false,
+      "predicted": "Mild payment-service noise under SLO (http_error_rate=0.04 < 0.15 threshold)",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-31-hikari-pool-paraphrase",
+      "correct": false,
+      "predicted": "HikariCP pool connection timeouts due to insufficient database connections",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-32-too-many-connections",
+      "correct": true,
+      "predicted": "payment-service too many connections causing checkout-service failures",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-33-cache-cold-path",
+      "correct": true,
+      "predicted": "Checkout service latency due to cache cold path engagement",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-34-fraud-only-ticket-payment",
+      "correct": false,
+      "predicted": "Fraud service timeouts causing payment service failures",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-35-inventory-only-metrics-logs",
+      "correct": true,
+      "predicted": "Checkout latency driven by inventory-service sku lock exhaustion",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-36-rollback-change-event",
+      "correct": false,
+      "predicted": "Checkout service rollback to v2.13 caused payment failures",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-37-metric-only-payment",
+      "correct": true,
+      "predicted": "payment-service internal error rate spike",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-38-no-fault-low-error",
+      "correct": true,
+      "predicted": "Insufficient evidence: checkout-service has low error_rate=0.03 but no upstream error/latency anomalies or logs",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-39-both-backends-partial",
+      "correct": true,
+      "predicted": "Payment service errors due to injected payment gateway timeouts",
+      "mode": "bedrock",
+      "notes": ""
+    },
+    {
+      "scenario_id": "rca-40-shared-redis-synonym",
+      "correct": true,
+      "predicted": "Shared redis GET miss on both payment-service and checkout-service",
+      "mode": "bedrock",
+      "notes": ""
+    }
+  ],
+  "honesty": "Rule path uses config/rca_patterns.yaml. Bedrock is optional and only scored when AWS credentials work \u2014 never fake LLM accuracy."
+}

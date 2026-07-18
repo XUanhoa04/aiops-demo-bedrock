@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-18T15:39:36.826115+00:00",
+  "generated_at": "2026-07-18T15:56:43.978251+00:00",
   "mode": "offline",
   "dataset": [
     "D:\\project\\aiops-demo-bedrock\\evaluation\\rca_scenarios.yaml"
@@ -10,6 +10,22 @@
     "holdout": 30,
     "other": 0
   },
+  "pattern_catalog": {
+    "path": "D:\\project\\aiops-demo-bedrock\\config\\rca_patterns.yaml",
+    "version": "1.0",
+    "n_patterns": 7,
+    "pattern_ids": [
+      "db_pool",
+      "cache_miss",
+      "payment_gateway",
+      "cpu_saturation",
+      "fraud_scoring",
+      "inventory_lock",
+      "post_deploy"
+    ],
+    "sha256": "a1b47ae161f0079daee4852c5649324e4791ad7ea7a08c353c6237e0b34fb72d"
+  },
+  "honesty": "Offline default = config-driven rule RCA on synthetic EvidencePack. Not a claim of learned ML or live OTel quality. Use --compare for rule vs Bedrock; evaluate_live_e2e.py for runtime.",
   "aggregate": {
     "n": 40,
     "correct": 40,

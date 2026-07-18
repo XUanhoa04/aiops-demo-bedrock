@@ -1,0 +1,56 @@
+{
+  "generated_at": "2026-07-18T16:06:27.127636+00:00",
+  "kind": "live_e2e",
+  "split_filter": "core",
+  "aggregate": {
+    "n": 2,
+    "correct": 0,
+    "accuracy": 0.0,
+    "skipped": 0
+  },
+  "rows": [
+    {
+      "scenario_id": "rca-01-payment-db-pool",
+      "split": "core",
+      "ticket_service": "payment-service",
+      "chaos": {
+        "error_rate": 0.45,
+        "extra_latency_ms": 400,
+        "fault_mode": "db_pool"
+      },
+      "ground_truth": "payment-service database connection pool exhaustion",
+      "load_ok": 9,
+      "load_err": 10,
+      "incident_id": "2d1d8ebc-bac3-4e0a-b5bf-d3cbc6eb5bc1",
+      "predicted": "slow traces observed (~603ms)",
+      "correct": false,
+      "jaccard": 0.0,
+      "keyword_rate": 0.0,
+      "confidence": 30,
+      "mode": "rule_based",
+      "notes": "status=fallback"
+    },
+    {
+      "scenario_id": "rca-02-checkout-db-pool",
+      "split": "core",
+      "ticket_service": "checkout-service",
+      "chaos": {
+        "error_rate": 0.5,
+        "extra_latency_ms": 200,
+        "fault_mode": "db_pool"
+      },
+      "ground_truth": "checkout-service database connection pool exhaustion",
+      "load_ok": 22,
+      "load_err": 10,
+      "incident_id": "99e30695-0afe-40b4-90b9-19dae8a16827",
+      "predicted": "slow traces observed (~739ms)",
+      "correct": false,
+      "jaccard": 0.0,
+      "keyword_rate": 0.0,
+      "confidence": 30,
+      "mode": "rule_based",
+      "notes": "status=fallback"
+    }
+  ],
+  "note": "Live path uses real chaos + OTel + RCA API. Scores depend on stack health and detector timing; not identical to offline YAML eval."
+}

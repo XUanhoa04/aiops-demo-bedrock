@@ -109,10 +109,23 @@ def health() -> HealthResponse:
     im_ok = bool(st.get("incident_manager_ok"))
     bedrock = st.get("bedrock") or {}
     degraded = not im_ok
+    pattern_info: dict = {}
+    try:
+        from aiops_shared.rca_patterns import load_pattern_catalog
+
+        cat = load_pattern_catalog(settings.rca_patterns_path or None)
+        pattern_info = {
+            "path": cat.path,
+            "version": cat.version,
+            "n_patterns": len(cat.patterns),
+            "pattern_ids": [p.id for p in cat.patterns],
+        }
+    except Exception as exc:
+        pattern_info = {"error": str(exc)}
     return HealthResponse(
         status="degraded" if degraded else "ok",
         service=settings.service_name,
-        version="0.2.0",
+        version="0.3.0",
         details={
             "mode": "bedrock" if bedrock.get("configured") else "rule_based",
             "bedrock": bedrock,
@@ -124,6 +137,11 @@ def health() -> HealthResponse:
             "min_bedrock_confidence": settings.min_bedrock_confidence,
             "bedrock_temperature": settings.bedrock_temperature,
             "grafana_public_url": settings.grafana_public_url,
+            "rca_patterns": pattern_info,
+            "control_plane": (
+                "Decision Engine owns RCA invocation; patterns from "
+                "config/rca_patterns.yaml (not hard-coded scenario if/else)"
+            ),
         },
     )
 
@@ -178,14 +196,24 @@ def analyze_incident(
     incident_id: str,
     force: bool = Query(default=True, description="Re-run even if RCA exists"),
     persist: bool = Query(default=True),
+    force_rule_based: bool = Query(
+        default=False,
+        description="Skip Bedrock; use config-driven rule RCA only (eval / offline parity)",
+    ),
 ) -> AnalyzeResponse:
     """
     Test / ops endpoint: run full grounded RCA for an existing incident id.
 
     Example:
       curl -X POST http://localhost:8003/analyze-incident/<id>?force=true
+      curl -X POST '.../analyze-incident/<id>?force_rule_based=true'  # live e2e rules
     """
-    return engine.analyze_incident(incident_id, persist=persist, force=force)
+    return engine.analyze_incident(
+        incident_id,
+        persist=persist,
+        force=force,
+        force_rule_based=force_rule_based,
+    )
 
 
 @app.post("/rca/preview-evidence")

@@ -79,13 +79,21 @@ python scripts/run_scenario.py --scenario rca-01-payment-db-pool
 | Recall | TP/(TP+FN) |
 | F1 | 2PR/(P+R) |
 
-## Sample results
-
-Re-run after every change — do **not** treat a green CI as “100% prod quality”:
+## Complete commands
 
 ```bash
+# Offline (CI)
 bash scripts/run-evaluation.sh
-# → evaluation/results/{anomaly,rca,baselines}_latest.json
+python evaluation/report_summary.py
+
+# Rule vs Bedrock (optional AWS)
+python evaluation/evaluate_rca.py --split all --compare
+
+# Live stack e2e (compose up)
+python evaluation/evaluate_live_e2e.py --limit 5 --split core
 ```
 
-Gates: anomaly F1 ≥ 0.75, RCA accuracy ≥ 0.70, system beats baselines.
+Artifacts: `evaluation/results/*_latest.json`.  
+Deep guide: [`docs/EVALUATION.md`](../docs/EVALUATION.md).
+
+Gates: anomaly overall F1 ≥ 0.70 + core ≥ 0.75; RCA overall ≥ 0.70 + holdout ≥ 0.55; beat baselines.

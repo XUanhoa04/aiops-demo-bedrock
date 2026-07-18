@@ -191,7 +191,33 @@ def scenario_to_evidence_pack(sc: dict[str, Any]):
     return pack
 
 
+def _score_row(
+    sc: dict,
+    result: Any,
+    *,
+    mode: str,
+    iterations: int = 1,
+    notes: str = "",
+) -> RcaScoreRow:
+    pred = result.root_cause if result else ""
+    gt = sc.get("ground_truth_root_cause") or ""
+    kws = list(sc.get("keywords") or [])
+    return RcaScoreRow(
+        scenario_id=str(sc.get("scenario_id")),
+        ground_truth=gt,
+        predicted=pred,
+        correct=is_rca_correct(pred, gt, kws),
+        jaccard=jaccard(pred, gt),
+        keyword_rate=keyword_hit_rate(pred, kws),
+        confidence=float(result.confidence) if result else None,
+        mode=mode,
+        iterations=iterations,
+        notes=notes,
+    )
+
+
 def run_offline(scenarios: list[dict], *, use_bedrock: bool) -> list[RcaScoreRow]:
+    """Primary offline path. Default = config-driven rules only."""
     from app.rule_fallback import rule_based_rca
 
     bedrock = None
@@ -201,7 +227,10 @@ def run_offline(scenarios: list[dict], *, use_bedrock: bool) -> list[RcaScoreRow
 
             bedrock = BedrockRCAClient()
             if not bedrock.configured:
-                print("[warn] Bedrock not configured — using rule_based only", file=sys.stderr)
+                print(
+                    "[warn] Bedrock not configured — using rule_based only",
+                    file=sys.stderr,
+                )
                 bedrock = None
         except Exception as exc:
             print(f"[warn] Bedrock import failed: {exc}", file=sys.stderr)
@@ -217,11 +246,9 @@ def run_offline(scenarios: list[dict], *, use_bedrock: bool) -> list[RcaScoreRow
 
         if bedrock is not None:
             try:
-                t0 = time.perf_counter()
                 result, usage = bedrock.analyze(pack)
                 iterations = max(1, getattr(usage, "attempt", 1) or 1)
                 mode = "bedrock"
-                # Low LLM confidence → one more iteration via rules (simulates limited loop)
                 if result.confidence < 40:
                     iterations += 1
                     rule = rule_based_rca(pack)
@@ -236,29 +263,120 @@ def run_offline(scenarios: list[dict], *, use_bedrock: bool) -> list[RcaScoreRow
         else:
             result = rule_based_rca(pack)
 
-        pred = result.root_cause if result else ""
-        gt = sc.get("ground_truth_root_cause") or ""
-        kws = list(sc.get("keywords") or [])
-        correct = is_rca_correct(pred, gt, kws)
-        rows.append(
-            RcaScoreRow(
-                scenario_id=str(sc.get("scenario_id")),
-                ground_truth=gt,
-                predicted=pred,
-                correct=correct,
-                jaccard=jaccard(pred, gt),
-                keyword_rate=keyword_hit_rate(pred, kws),
-                confidence=float(result.confidence) if result else None,
-                mode=mode,
-                iterations=iterations,
-                notes=notes,
-            )
-        )
+        row = _score_row(sc, result, mode=mode, iterations=iterations, notes=notes)
+        rows.append(row)
         print(
-            f"  [{sc.get('scenario_id')}] correct={correct} mode={mode} "
-            f"jaccard={jaccard(pred, gt):.2f} pred={pred[:80]!r}"
+            f"  [{row.scenario_id}] correct={row.correct} mode={mode} "
+            f"jaccard={row.jaccard:.2f} pred={(row.predicted or '')[:80]!r}"
         )
     return rows
+
+
+def run_offline_compare(
+    scenarios: list[dict],
+) -> tuple[list[RcaScoreRow], list[RcaScoreRow], dict[str, Any]]:
+    """
+    Always score config-driven rules; also try Bedrock when credentials exist.
+
+    Returns (rule_rows, bedrock_rows, meta). bedrock_rows may be empty if
+    AWS is not configured — honesty over silent fake LLM scores.
+    """
+    from app.rule_fallback import rule_based_rca
+
+    rule_rows: list[RcaScoreRow] = []
+    bedrock_rows: list[RcaScoreRow] = []
+    meta: dict[str, Any] = {"bedrock_configured": False, "bedrock_error": None}
+
+    bedrock = None
+    try:
+        from app.bedrock_client import BedrockRCAClient
+
+        bedrock = BedrockRCAClient()
+        meta["bedrock_configured"] = bool(bedrock.configured)
+        if not bedrock.configured:
+            bedrock = None
+            meta["bedrock_error"] = "credentials missing"
+    except Exception as exc:
+        meta["bedrock_error"] = str(exc)
+        bedrock = None
+
+    for sc in scenarios:
+        pack = scenario_to_evidence_pack(sc)
+        rule = rule_based_rca(pack)
+        rr = _score_row(sc, rule, mode="rule_based")
+        rule_rows.append(rr)
+
+        if bedrock is None:
+            print(
+                f"  [{rr.scenario_id}] rule={rr.correct} bedrock=SKIP "
+                f"pred={(rr.predicted or '')[:50]!r}"
+            )
+            continue
+
+        notes = ""
+        mode = "bedrock"
+        try:
+            bres, usage = bedrock.analyze(pack)
+            iterations = max(1, getattr(usage, "attempt", 1) or 1)
+            # Pure bedrock score (no silent rule swap) for fair comparison
+            br = _score_row(
+                sc, bres, mode=mode, iterations=iterations, notes=notes
+            )
+        except Exception as exc:
+            br = _score_row(
+                sc,
+                rule,
+                mode="bedrock_failed_fallback_rule",
+                iterations=2,
+                notes=str(exc),
+            )
+        bedrock_rows.append(br)
+        print(
+            f"  [{rr.scenario_id}] rule={rr.correct} bedrock={br.correct} "
+            f"agree={rr.predicted == br.predicted}"
+        )
+
+    # Agreement among scenarios where both ran
+    agree = 0
+    n = 0
+    by_id_b = {r.scenario_id: r for r in bedrock_rows}
+    for r in rule_rows:
+        b = by_id_b.get(r.scenario_id)
+        if not b or b.mode.startswith("bedrock_failed"):
+            continue
+        n += 1
+        if r.correct == b.correct and (
+            jaccard(r.predicted, b.predicted) >= 0.35
+            or (r.predicted or "").lower() in (b.predicted or "").lower()
+            or (b.predicted or "").lower() in (r.predicted or "").lower()
+        ):
+            agree += 1
+    meta["agreement_rate"] = round(agree / n, 4) if n else None
+    meta["agreement_n"] = n
+    return rule_rows, bedrock_rows, meta
+
+
+def pattern_catalog_meta() -> dict[str, Any]:
+    """Fingerprint of config/rca_patterns.yaml for eval honesty / freeze audits."""
+    import hashlib
+
+    try:
+        from aiops_shared.rca_patterns import load_pattern_catalog
+
+        cat = load_pattern_catalog()
+        path = Path(cat.path) if cat.path and cat.path != "builtin" else None
+        sha = ""
+        if path and path.is_file():
+            sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        return {
+            "path": cat.path,
+            "version": cat.version,
+            "n_patterns": len(cat.patterns),
+            "pattern_ids": [p.id for p in cat.patterns],
+            "sha256": sha,
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 def run_online(
@@ -395,13 +513,27 @@ def main() -> int:
         default="offline",
         help="offline=EvidencePack+rules; online=HTTP RCA on live stack",
     )
-    p.add_argument("--bedrock", action="store_true", help="Try Bedrock in offline mode")
+    p.add_argument(
+        "--bedrock",
+        action="store_true",
+        help="Offline: use Bedrock when configured (else rules)",
+    )
+    p.add_argument(
+        "--compare",
+        action="store_true",
+        help="Offline: score rules AND Bedrock separately (writes compare file)",
+    )
     p.add_argument("--incident-url", default="http://localhost:8002")
     p.add_argument("--rca-url", default="http://localhost:8003")
     p.add_argument(
         "--output",
         type=Path,
         default=EVAL_DIR / "results" / "rca_latest.json",
+    )
+    p.add_argument(
+        "--compare-output",
+        type=Path,
+        default=EVAL_DIR / "results" / "rca_compare_latest.json",
     )
     args = p.parse_args()
 
@@ -412,9 +544,82 @@ def main() -> int:
     scenarios = load_scenarios_multi(paths, split=args.split)
     splits = split_counts(scenarios)
     print(f"=== RCA Evaluation ({args.mode}) n={len(scenarios)} split={args.split} ===")
-    print(f"dataset={', '.join(str(x) for x in paths)} core={splits['core']} holdout={splits['holdout']}")
+    print(
+        f"dataset={', '.join(str(x) for x in paths)} "
+        f"core={splits['core']} holdout={splits['holdout']}"
+    )
+    cat_meta = pattern_catalog_meta()
+    if cat_meta.get("path"):
+        print(
+            f"pattern_catalog={cat_meta.get('path')} "
+            f"n={cat_meta.get('n_patterns')} sha={str(cat_meta.get('sha256') or '')[:12]}"
+        )
 
-    if args.mode == "offline":
+    compare_payload: Optional[dict[str, Any]] = None
+    if args.mode == "offline" and args.compare:
+        rule_rows, bedrock_rows, meta = run_offline_compare(scenarios)
+        rows = rule_rows  # primary artifact remains rule-based for CI
+        by_engine = {
+            "rule_based": {
+                "n": len(rule_rows),
+                "correct": sum(1 for r in rule_rows if r.correct),
+                "accuracy": round(
+                    sum(1 for r in rule_rows if r.correct) / max(len(rule_rows), 1), 4
+                ),
+            }
+        }
+        if bedrock_rows:
+            by_engine["bedrock"] = {
+                "n": len(bedrock_rows),
+                "correct": sum(1 for r in bedrock_rows if r.correct),
+                "accuracy": round(
+                    sum(1 for r in bedrock_rows if r.correct)
+                    / max(len(bedrock_rows), 1),
+                    4,
+                ),
+            }
+        compare_payload = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "dataset": [str(x) for x in paths],
+            "split_filter": args.split,
+            "pattern_catalog": cat_meta,
+            "by_engine": by_engine,
+            "agreement_rate": meta.get("agreement_rate"),
+            "agreement_n": meta.get("agreement_n"),
+            "bedrock_meta": {
+                "configured": meta.get("bedrock_configured"),
+                "error": meta.get("bedrock_error"),
+            },
+            "rule_rows": [
+                {
+                    "scenario_id": r.scenario_id,
+                    "correct": r.correct,
+                    "predicted": r.predicted,
+                    "mode": r.mode,
+                }
+                for r in rule_rows
+            ],
+            "bedrock_rows": [
+                {
+                    "scenario_id": r.scenario_id,
+                    "correct": r.correct,
+                    "predicted": r.predicted,
+                    "mode": r.mode,
+                    "notes": r.notes,
+                }
+                for r in bedrock_rows
+            ],
+            "honesty": (
+                "Rule path uses config/rca_patterns.yaml. Bedrock is optional and "
+                "only scored when AWS credentials work — never fake LLM accuracy."
+            ),
+        }
+        print(
+            f"\n--- Compare --- rule_acc={by_engine['rule_based']['accuracy']:.1%} "
+            f"bedrock_acc={by_engine.get('bedrock', {}).get('accuracy', 'SKIP')} "
+            f"agreement={meta.get('agreement_rate')}"
+        )
+    elif args.mode == "offline":
         rows = run_offline(scenarios, use_bedrock=args.bedrock)
     else:
         rows = run_online(
@@ -483,6 +688,12 @@ def main() -> int:
         "dataset": [str(x) for x in paths],
         "split_filter": args.split,
         "split_counts": splits,
+        "pattern_catalog": cat_meta,
+        "honesty": (
+            "Offline default = config-driven rule RCA on synthetic EvidencePack. "
+            "Not a claim of learned ML or live OTel quality. "
+            "Use --compare for rule vs Bedrock; evaluate_live_e2e.py for runtime."
+        ),
         "aggregate": {
             "n": agg.n,
             "correct": agg.correct,
@@ -516,6 +727,12 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(f"\nWrote {args.output}")
+    if compare_payload is not None:
+        args.compare_output.parent.mkdir(parents=True, exist_ok=True)
+        args.compare_output.write_text(
+            json.dumps(compare_payload, indent=2), encoding="utf-8"
+        )
+        print(f"Wrote {args.compare_output}")
     return 0 if agg.accuracy >= 0.0 else 1
 
 

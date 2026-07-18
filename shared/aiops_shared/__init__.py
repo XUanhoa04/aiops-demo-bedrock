@@ -15,6 +15,8 @@ from aiops_shared.models import (
 )
 from aiops_shared.otel import setup_otel
 from aiops_shared.logging_config import setup_logging
+from aiops_shared.rca_patterns import load_pattern_catalog
+from aiops_shared.topology import load_topology_catalog
 
 __all__ = [
     "AnomalyEvent",
@@ -24,6 +26,8 @@ __all__ = [
     "RemediationAction",
     "setup_otel",
     "setup_logging",
+    "load_pattern_catalog",
+    "load_topology_catalog",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
