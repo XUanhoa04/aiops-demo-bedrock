@@ -1,10 +1,8 @@
 """
-Best-effort hand-off to the RCA Engine (Day-2).
+Best-effort hand-off to the RCA Engine.
 
-Day-1 behaviour
----------------
-* When RCA_ENGINE_URL is empty → no-op (default for Day-1 compose).
-* When set (or day2 profile) → POST /rca/analyze with the incident id.
+* When RCA_ENGINE_URL is empty → no-op.
+* When set → POST /rca/analyze with the incident id.
 * Failures are logged + counted; they never block ticket creation.
 
 Production notes

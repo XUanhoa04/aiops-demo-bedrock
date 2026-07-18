@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # Production: Postgres/Aurora + migrations (Alembic).
     incident_db_path: str = "/data/incidents.db"
 
-    # Bedrock reserved for Day-2 enrichment hooks
+    # Optional Bedrock metadata surfaced on /stats (RCA owns the client)
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     aws_default_region: str = "us-east-1"
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     decision_timeout_sec: float = 15.0
     enable_decision_engine: bool = True
 
-    # Also enqueue incident JSON on Redis for async Day-2 consumers
+    # Also enqueue incident JSON on Redis for async consumers (RCA, etc.)
     enable_redis_incident_fanout: bool = True
 
     # Browser-facing Grafana (for one-click Trace / Logs deep-links in the UI).

@@ -3,7 +3,7 @@ aiops_shared — common models, OTEL bootstrap, Redis helpers for AIOps Demo.
 
 Production choice: a tiny internal package copied into each image (see Dockerfiles)
 avoids a private PyPI / multi-repo monorepo for a single-repo CV demo, while still
-keeping DRY contracts between detector, incident-manager, RCA topology, and Day-2 services.
+keeping DRY contracts between detector, incident-manager, RCA topology, and remediation.
 """
 
 from aiops_shared.models import (

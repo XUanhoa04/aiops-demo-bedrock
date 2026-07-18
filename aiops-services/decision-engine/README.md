@@ -1,6 +1,6 @@
 # Decision Engine
 
-Confidence-gated router between **anomaly-detector** (Confidence Scorer) and Day-2 actions (RCA / remediation / on-call).
+Confidence-gated router between **anomaly-detector** (Confidence Scorer) and RCA / remediation / on-call.
 
 ## Decision table
 

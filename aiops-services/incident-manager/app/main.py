@@ -5,8 +5,8 @@ Receives anomalies from:
   1. Redis queue (async consumer) — primary path from Anomaly Detector
   2. HTTP webhook POST /incidents/from-anomaly — sync path
 
-Persists tickets, exposes REST + simple UI, Prometheus metrics, and a Day-2
-RCA Engine hand-off hook.
+Persists tickets, exposes REST + simple UI, Prometheus metrics, and
+RCA / Decision Engine hand-off hooks.
 """
 
 from __future__ import annotations
@@ -240,7 +240,7 @@ def create_incident(body: IncidentCreate) -> Incident:
         service=inc.service_name,
     )
     set_open_incidents(repo.count_open())
-    # Manual tickets also fan-out for Day-2 pipelines
+    # Manual tickets also fan-out to Decision Engine / RCA
     consumer.fanout_new_incident(inc)
     return inc
 

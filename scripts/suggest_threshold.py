@@ -40,7 +40,7 @@ def main() -> int:
             print(http_get(f"{base}/tuning/report"))
     except urllib.error.URLError as exc:
         print(f"Failed to reach feedback-collector at {base}: {exc}", file=sys.stderr)
-        print("Hint: docker compose --profile day2 up -d aiops-feedback-collector", file=sys.stderr)
+        print("Hint: docker compose up -d aiops-feedback-collector", file=sys.stderr)
         return 1
     return 0
 

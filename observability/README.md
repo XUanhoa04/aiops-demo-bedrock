@@ -81,4 +81,4 @@ python scripts/suggest_threshold.py --json
 curl http://localhost:8005/tuning/report
 ```
 
-Streamlit on-call UI: **http://localhost:8502** (profile `day2`).
+Streamlit on-call UI: **http://localhost:8502**.

@@ -158,7 +158,7 @@ class AnomalyConsumer:
         if self.decision.enabled:
             self.decision.push(incident, anomaly=anomaly)
 
-        # Day-2 RCA hook (async); Decision Engine may also call RCA on medium band
+        # RCA hook (async); Decision Engine may also call RCA on medium band
         if self.rca.enabled:
             self.rca.push_incident(incident)
 

@@ -77,7 +77,7 @@ class Incident(BaseModel):
     threshold: Optional[float] = None
     labels: dict[str, str] = Field(default_factory=dict)
     context: dict[str, Any] = Field(default_factory=dict)
-    # Day-2 fields (RCA / remediation / human feedback)
+    # RCA / remediation / human feedback
     root_cause: Optional[str] = None
     rca_confidence: Optional[float] = None
     remediation_notes: Optional[str] = None
@@ -91,7 +91,7 @@ class Incident(BaseModel):
 
 
 class RemediationAction(BaseModel):
-    """Planned or executed remediation step (Day-2)."""
+    """Planned or executed remediation step."""
 
     id: str = Field(default_factory=lambda: str(uuid4()))
     incident_id: str
