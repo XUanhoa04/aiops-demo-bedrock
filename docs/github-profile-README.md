@@ -1,11 +1,11 @@
 <!--
   GitHub Profile README for https://github.com/XUanhoa04
-  Images: only shields.io + github.com avatars (stable CDN, no broken links)
+  Stable images: shields.io + github.com + github-readme-stats (official vercel app)
 -->
 
 <div align="center">
 
-  <img src="https://github.com/XUanhoa04.png" width="110" height="110" alt="Xuan Hoa avatar" style="border-radius:50%;" />
+  <img src="https://github.com/XUanhoa04.png" width="110" height="110" alt="Xuan Hoa avatar" />
 
   # Hi, I'm **Xuân Hòa**
 
@@ -26,9 +26,28 @@
 
 I care about systems that **fail safely** and **explain themselves** to on-call engineers.
 
-- Focus: **AIOps**, **observability**, **SRE practices**, **AWS**, container platforms  
+- Learning path: **AIOps**, **MLOps**, **Cloud (AWS)**  
 - Approach: closed-loop automation with **human gates** on high-risk actions  
-- Currently shipping **SentinelLoop** — a production-*like* AIOps portfolio stack with topology-aware RCA and CI evaluation  
+- Portfolio: **SentinelLoop** — production-*like* AIOps stack with topology-aware RCA and CI evaluation  
+
+---
+
+## GitHub stats
+
+<div align="center">
+
+  <!-- shields.io — always available -->
+  <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Fusers%2FXUanhoa04&query=%24.public_repos&style=for-the-badge&logo=github&label=Public%20Repos&color=181717" alt="Public repos" />
+  <img src="https://img.shields.io/github/followers/XUanhoa04?style=for-the-badge&logo=github&label=Followers&color=181717" alt="Followers" />
+  <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Fusers%2FXUanhoa04&query=%24.following&style=for-the-badge&logo=github&label=Following&color=181717" alt="Following" />
+  <img src="https://img.shields.io/github/stars/XUanhoa04/aiops-demo-bedrock?style=for-the-badge&logo=github&label=SentinelLoop%20Stars&color=yellow" alt="SentinelLoop stars" />
+  <br/><br/>
+
+  <!-- github-readme-stats (standard community endpoint) -->
+  <img height="165" src="https://github-readme-stats.vercel.app/api?username=XUanhoa04&show_icons=true&include_all_commits=true&count_private=true&theme=tokyonight&hide_border=true&bg_color=0D1117&title_color=58A6FF&icon_color=58A6FF&text_color=C9D1D9&ring_color=58A6FF&cache_seconds=1800" alt="GitHub stats" />
+  <img height="165" src="https://github-readme-stats.vercel.app/api/top-langs/?username=XUanhoa04&layout=compact&theme=tokyonight&hide_border=true&bg_color=0D1117&title_color=58A6FF&text_color=C9D1D9&cache_seconds=1800" alt="Top languages" />
+
+</div>
 
 ---
 
@@ -79,8 +98,6 @@ I care about systems that **fail safely** and **explain themselves** to on-call 
 
 ## Tech stack
 
-> Badges via [shields.io](https://shields.io) only — no third-party icon CDNs that go offline.
-
 ### Languages & frameworks
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
@@ -111,12 +128,15 @@ I care about systems that **fail safely** and **explain themselves** to on-call 
 
 ## What I'm focusing on
 
+Currently **learning and building** around:
+
 ```text
-→ AIOps closed loops with human-in-the-loop safety
-→ Observability-first design (metrics · logs · traces · topology)
-→ Cloud platforms (AWS) and containerized delivery
-→ Clear engineering writing (architecture trade-offs > hype)
+→ AIOps   — closed-loop detect → decide → RCA → remediate
+→ MLOps   — model lifecycle, eval gates, safe automation
+→ Cloud   — AWS, containers, observability (metrics · logs · traces)
 ```
+
+Hands-on portfolio: [SentinelLoop](https://github.com/XUanhoa04/aiops-demo-bedrock) (topology-aware RCA, confidence scoring, CI evaluation).
 
 ---
 
@@ -132,8 +152,8 @@ I care about systems that **fail safely** and **explain themselves** to on-call 
 
 <div align="center">
 
-  **Thanks for visiting** — feel free to star [SentinelLoop](https://github.com/XUanhoa04/aiops-demo-bedrock) or open an issue if you want to chat about AIOps / SRE.
+  **Thanks for visiting** — star [SentinelLoop](https://github.com/XUanhoa04/aiops-demo-bedrock) if it helps your interview prep.
 
-  <img src="https://img.shields.io/badge/Open_to-Collaboration-success?style=for-the-badge" alt="Open to collaboration" />
+  <img src="https://img.shields.io/badge/Learning-AIOps%20%7C%20MLOps%20%7C%20Cloud-58A6FF?style=for-the-badge" alt="Learning AIOps MLOps Cloud" />
 
 </div>
