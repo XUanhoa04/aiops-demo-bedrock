@@ -84,18 +84,35 @@ CI requires **beating weak**. Beating strong is reported and desirable, not alwa
 | Wrong-hop rate | ≤ 0.25 |
 | Baselines | system **>** best weak baseline |
 
+## Sample results snapshot (offline, re-run with `run-evaluation.sh`)
+
+*Numbers below are from a local suite run after the multi-layer eval work; re-run before citing in interviews.*
+
+| Layer | Metric | Sample value | Interpretation |
+|-------|--------|--------------|----------------|
+| Anomaly **L0** (n≈28) | F1 / P / R | **0.97 / 0.94 / 1.00** | Clean synthetic — catalog-friendly |
+| Anomaly **hard** (n≈16) | F1 / P / R | **0.67 / 0.71 / 0.63** | Stats-only + noise — CV-honest |
+| Anomaly overall (n≈44) | F1 | **0.88** | Mix of L0 + hard |
+| RCA **core/holdout** (n≈42) | Acc (default) | **1.00** | Pattern-catalog regression |
+| RCA **hard OOD** (n≈10) | Acc default / strict | **0.60 / 0.50** | Unknown faults must not invent pool |
+| RCA overall (n≈52) | Acc default / strict | **0.92 / 0.90** | Includes hard; mean Jaccard ≈ **0.66** |
+| Wrong-hop rate | — | **0.00** | Service attribution guard |
+| Baselines | System vs best weak / best strong | **0.92 > 0.21** / **0.92 > 0.81** | Beats weak + SRE log-bag |
+
+Live e2e depends on stack timing/Loki fill — report accuracy **and** evidence completeness; do not equate to offline YAML.
+
 ## What *not* to claim on a CV
 
 | Claim | Reality |
 |-------|---------|
-| “RCA 100% = production quality” | Offline default = catalog coverage |
+| “RCA 100% = production quality” | L0 catalog only; hard OOD is ~0.5–0.6 |
 | “Holdout proves learned generalization” | Still rule/pattern matching |
 | “Always uses Bedrock” | Bedrock optional; fail-open to rules |
 | “Live accuracy = offline accuracy” | Live depends on timing/OTel fill; use completeness |
 
-**Safe CV wording**
+**Safe CV wording (with sample numbers)**
 
-> Offline catalog regression (default) + strict scoring + hard/OOD suite + optional live e2e with evidence completeness. L0 accuracy is high by design; strict/hard/live are the honest quality signals.
+> Built explainable AIOps closed loop (detect → decide → topology RCA → gated remediate). Offline: anomaly hard F1 ~0.67, RCA hard ~0.60 / strict overall ~0.90, wrong-hop 0%; beats SRE baselines (~0.81). L0 catalog can score higher by design — not claimed as prod ML.
 
 ## Artifacts
 

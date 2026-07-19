@@ -55,7 +55,7 @@ python scripts/dynamic_load.py --profile demo --stage-seconds 12
 
 - Open http://localhost:8502 → thumbs; or Engine QA :8503.
 - Mention offline suite: `bash scripts/run-evaluation.sh` · `report_summary.py`.
-- **Say:** “Offline scores are a regression gate for the pattern catalog — not a claim of perfect prod ML. Live path uses real chaos + OTel.”
+- **Say:** “We separate L0 catalog regression (can be ~1.0) from hard/OOD and strict scoring — e.g. anomaly hard F1 ~0.67, RCA hard ~0.60. Live path uses real chaos + OTel; offline ≠ prod ML.”
 
 ## Why this impresses seniors
 
@@ -66,7 +66,7 @@ python scripts/dynamic_load.py --profile demo --stage-seconds 12
 | Explainability | Sigma/EWMA narratives + config patterns |
 | Topology | 4 real apps + wrong-hop / multi-hop scenarios |
 | Operability | One-click traces, healthchecks, compose one-shot |
-| Learning loop | Feedback metrics + Engine QA + CI baselines |
+| Learning loop | Feedback + Engine QA + multi-layer eval (L0/hard/strict) + SRE baselines |
 
 ## Anti-patterns we deliberately avoided
 
@@ -74,7 +74,7 @@ python scripts/dynamic_load.py --profile demo --stage-seconds 12
 - Ungrounded LLM RCA from the ticket title alone
 - Hard-coded `if scenario_id` RCA branches
 - Auto-scale on every blip without correlation
-- Claiming offline 100% accuracy as production quality
+- Claiming offline L0 ~100% accuracy as production quality (use hard/strict instead)
 
 ## Optional deep-dive: Astronomy Shop
 

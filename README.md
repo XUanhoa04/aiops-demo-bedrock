@@ -49,7 +49,7 @@ Guide: [`docs/OTEL_DEMO.md`](docs/OTEL_DEMO.md). Default compose uses a **4-serv
 | **Time-to-evidence** | Incident UI **🔍 View Trace** + topology panel deep-links Grafana Tempo |
 | **Closed loop** | Feedback metrics (`feedback_positive_rate`, `rca_accuracy_estimate`, `false_positive_count`) |
 | **Operate-ability** | One compose file, healthchecks, non-root images, log rotation |
-| **Measurable quality** | Offline anomaly F1 + RCA accuracy (stricter scoring) + **baseline beat** in CI |
+| **Measurable quality** | Multi-layer eval: L0 catalog + hard/OOD + **strict** RCA + SRE baselines in CI |
 
 ### Production trade-offs (not oversold)
 
@@ -276,7 +276,7 @@ python evaluation/report_summary.py
 bash scripts/run-evaluation.sh --compare
 
 # Optional: live e2e (stack up)
-python evaluation/evaluate_live_e2e.py --limit 5 --split core
+python evaluation/evaluate_live_e2e.py --limit 10 --split core
 ```
 
 ### Sample evaluation gates (offline) — honesty layers
@@ -291,8 +291,19 @@ python evaluation/evaluate_live_e2e.py --limit 5 --split core
 | **Baselines** | Weak + SRE heuristics | Must beat **weak**; strong reported | random / ticket-service / top-error |
 | **L2** | Live e2e | Optional; completeness reported | Real chaos + OTel path |
 
-Offline **default** scores measure **catalog/regression coverage**, not production ML.  
-Prefer reporting **strict + hard + live** on a resume. Artifacts: `evaluation/results/*_latest.json`.
+### Sample results snapshot (re-run before interviews)
+
+| Layer | Metric | Sample |
+|-------|--------|--------|
+| Anomaly L0 / hard / overall | F1 | **~0.97 / 0.67 / 0.88** |
+| RCA core+holdout (catalog) | Acc | **~1.00** (L0 regression) |
+| RCA hard OOD | Acc default / strict | **~0.60 / 0.50** |
+| RCA overall (n≈52) | Acc default / strict | **~0.92 / 0.90** · wrong-hop **0%** |
+| Baselines | System vs best strong | **~0.92 vs ~0.81** (log phrase bag) |
+
+Offline **default** L0 scores measure **catalog/regression coverage**, not production ML.  
+On a resume, lead with **hard F1, hard RCA, strict, baselines** — not L0 alone.  
+Full tables: [`docs/EVALUATION.md`](docs/EVALUATION.md). Artifacts: `evaluation/results/*_latest.json`.
 
 ### One-shot demo (for your video)
 

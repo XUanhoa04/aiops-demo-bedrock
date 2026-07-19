@@ -93,12 +93,12 @@ python evaluation/evaluate_live_e2e.py --limit 5 --no-seed-context
 
 ## What to put on a CV
 
-Prefer:
+Prefer (sample offline numbers — re-run before interviews):
 
-> strict RCA accuracy, hard-suite F1, live e2e accuracy + evidence completeness
+> anomaly hard F1 ~0.67 · RCA hard ~0.60 / overall strict ~0.90 · wrong-hop 0% · system ~0.92 vs strong baseline ~0.81
 
 Avoid leading with:
 
-> offline default RCA 100% / anomaly F1 97% without the honesty layer story
+> offline default RCA 100% / anomaly F1 97% without the L0-vs-hard story
 
-Deep guide: [`docs/EVALUATION.md`](../docs/EVALUATION.md).
+Deep guide + full snapshot table: [`docs/EVALUATION.md`](../docs/EVALUATION.md).
