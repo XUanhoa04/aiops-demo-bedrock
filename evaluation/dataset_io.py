@@ -116,7 +116,7 @@ def is_fault_scenario(sc: dict[str, Any]) -> bool:
 
 
 def split_counts(scenarios: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {"core": 0, "holdout": 0, "other": 0}
+    counts = {"core": 0, "holdout": 0, "hard": 0, "other": 0}
     for sc in scenarios:
         s = str(sc.get("split") or "core").lower()
         if s in counts:

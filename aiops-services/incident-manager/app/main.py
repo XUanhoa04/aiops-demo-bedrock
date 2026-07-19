@@ -86,6 +86,8 @@ class IncidentCreate(BaseModel):
     severity: AnomalySeverity = AnomalySeverity.MEDIUM
     metric_name: Optional[str] = None
     metric_value: Optional[float] = None
+    # Optional ops / live-e2e context (fault_detail seed, evaluation flags)
+    context: Optional[dict] = None
 
 
 class IncidentUpdate(BaseModel):
@@ -284,7 +286,10 @@ def incident_topology(incident_id: str) -> dict:
 
 @app.post("/incidents", response_model=Incident, status_code=201)
 def create_incident(body: IncidentCreate) -> Incident:
-    """Manual ticket creation (UI / ops / tests)."""
+    """Manual ticket creation (UI / ops / tests / live e2e)."""
+    ctx = {"source": "manual"}
+    if body.context:
+        ctx = {**ctx, **dict(body.context)}
     inc = Incident(
         title=body.title,
         description=body.description,
@@ -292,7 +297,7 @@ def create_incident(body: IncidentCreate) -> Incident:
         severity=body.severity,
         metric_name=body.metric_name,
         metric_value=body.metric_value,
-        context={"source": "manual"},
+        context=ctx,
     )
     repo.insert(inc)
     record_created(

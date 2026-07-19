@@ -47,7 +47,9 @@ from dataset_io import (  # noqa: E402
 from scoring import (  # noqa: E402
     aggregate_rca,
     format_table,
+    grade_rca,
     is_rca_correct,
+    is_wrong_hop,
     jaccard,
     keyword_hit_rate,
     RcaScoreRow,
@@ -202,17 +204,24 @@ def _score_row(
     pred = result.root_cause if result else ""
     gt = sc.get("ground_truth_root_cause") or ""
     kws = list(sc.get("keywords") or [])
+    correct_default = is_rca_correct(pred, gt, kws, mode="default")
+    correct_strict = is_rca_correct(pred, gt, kws, mode="strict")
     return RcaScoreRow(
         scenario_id=str(sc.get("scenario_id")),
         ground_truth=gt,
         predicted=pred,
-        correct=is_rca_correct(pred, gt, kws),
+        correct=correct_default,
+        correct_strict=correct_strict,
         jaccard=jaccard(pred, gt),
         keyword_rate=keyword_hit_rate(pred, kws),
         confidence=float(result.confidence) if result else None,
         mode=mode,
         iterations=iterations,
         notes=notes,
+        grade=grade_rca(pred, gt, kws, mode="default"),
+        grade_strict=grade_rca(pred, gt, kws, mode="strict"),
+        wrong_hop=is_wrong_hop(pred, gt),
+        scoring_mode="default",
     )
 
 
@@ -467,23 +476,18 @@ def run_online(
 
         gt = sc.get("ground_truth_root_cause") or ""
         kws = list(sc.get("keywords") or [])
-        correct = is_rca_correct(pred, gt, kws)
-        rows.append(
-            RcaScoreRow(
-                scenario_id=str(sc.get("scenario_id")),
-                ground_truth=gt,
-                predicted=pred,
-                correct=correct,
-                jaccard=jaccard(pred, gt),
-                keyword_rate=keyword_hit_rate(pred, kws),
-                confidence=float(conf) if conf is not None else None,
-                mode=str(mode),
-                iterations=iterations,
-                notes=notes,
-            )
+        dummy = type("R", (), {"root_cause": pred, "confidence": conf or 0})()
+        row = _score_row(
+            sc,
+            dummy,
+            mode=str(mode),
+            iterations=iterations,
+            notes=notes,
         )
+        rows.append(row)
         print(
-            f"  [{sc.get('scenario_id')}] correct={correct} mode={mode} pred={pred[:80]!r}"
+            f"  [{sc.get('scenario_id')}] ok={row.correct} strict={row.correct_strict} "
+            f"grade={row.grade} mode={mode} pred={pred[:80]!r}"
         )
     return rows
 
@@ -503,9 +507,17 @@ def main() -> int:
     )
     p.add_argument(
         "--split",
-        choices=("all", "core", "holdout"),
+        choices=("all", "core", "holdout", "hard"),
         default="all",
-        help="Filter scenarios by split field (core/holdout)",
+        help="Filter scenarios by split field (core/holdout/hard)",
+    )
+    p.add_argument(
+        "--extra-dataset",
+        type=Path,
+        action="append",
+        default=None,
+        help="Additional dataset YAML (e.g. rca_scenarios_hard.yaml). "
+        "Default: also load hard file when present.",
     )
     p.add_argument(
         "--mode",
@@ -537,16 +549,24 @@ def main() -> int:
     )
     args = p.parse_args()
 
+    extra = list(args.extra_dataset or [])
+    # Auto-include hard OOD suite for split=all or hard
+    hard_path = EVAL_DIR / "rca_scenarios_hard.yaml"
+    if hard_path.is_file() and args.dataset is None:
+        if hard_path not in extra:
+            extra.append(hard_path)
     paths = resolve_dataset_paths(
         args.dataset,
         default_files=[EVAL_DIR / "rca_scenarios.yaml"],
+        extra=extra,
     )
     scenarios = load_scenarios_multi(paths, split=args.split)
     splits = split_counts(scenarios)
     print(f"=== RCA Evaluation ({args.mode}) n={len(scenarios)} split={args.split} ===")
     print(
         f"dataset={', '.join(str(x) for x in paths)} "
-        f"core={splits['core']} holdout={splits['holdout']}"
+        f"core={splits.get('core', 0)} holdout={splits.get('holdout', 0)} "
+        f"hard={splits.get('hard', 0) or splits.get('other', 0)}"
     )
     cat_meta = pattern_catalog_meta()
     if cat_meta.get("path"):
@@ -634,7 +654,7 @@ def main() -> int:
     # Per-split aggregates (when running all)
     split_aggs: dict[str, Any] = {}
     if args.split == "all":
-        for name in ("core", "holdout"):
+        for name in ("core", "holdout", "hard"):
             sub_sc = [sc for sc in scenarios if str(sc.get("split") or "core") == name]
             sub_ids = {str(sc["scenario_id"]) for sc in sub_sc}
             sub_rows = [r for r in rows if r.scenario_id in sub_ids]
@@ -644,23 +664,28 @@ def main() -> int:
                     "n": sa.n,
                     "correct": sa.correct,
                     "accuracy": round(sa.accuracy, 4),
+                    "accuracy_strict": round(sa.accuracy_strict, 4),
                     "precision": round(sa.binary.precision(), 4),
                     "recall": round(sa.binary.recall(), 4),
                     "f1": round(sa.binary.f1(), 4),
+                    "wrong_hop_rate": round(sa.wrong_hop_rate, 4),
+                    "mean_jaccard": round(sa.mean_jaccard, 4),
+                    "grade_counts": sa.grade_counts,
                 }
 
     table = format_table(
-        ["scenario_id", "split", "ok", "jac", "kw", "iter", "mode", "predicted"],
+        ["scenario_id", "split", "ok", "strict", "grade", "jac", "wh", "mode", "predicted"],
         [
             [
                 r.scenario_id,
                 str((by_id.get(r.scenario_id) or {}).get("split") or "core"),
                 "Y" if r.correct else "N",
+                "Y" if r.correct_strict else "N",
+                str(r.grade)[:12],
                 f"{r.jaccard:.2f}",
-                f"{r.keyword_rate:.2f}",
-                str(r.iterations),
-                r.mode[:12],
-                (r.predicted or "")[:40],
+                "Y" if r.wrong_hop else "N",
+                r.mode[:10],
+                (r.predicted or "")[:36],
             ]
             for r in rows
         ],
@@ -668,18 +693,23 @@ def main() -> int:
     print()
     print(table)
     print()
-    print("--- Aggregate ---")
-    print(f"Accuracy:              {agg.accuracy:.1%}  ({agg.correct}/{agg.n})")
+    print("--- Aggregate (L0 catalog / default scoring) ---")
+    print(f"Accuracy (default):    {agg.accuracy:.1%}  ({agg.correct}/{agg.n})")
+    print(f"Accuracy (strict):     {agg.accuracy_strict:.1%}  ({agg.correct_strict}/{agg.n})")
+    print(f"Wrong-hop rate:        {agg.wrong_hop_rate:.1%}")
     print(f"Precision (fault P/R): {agg.binary.precision():.1%}")
     print(f"Recall (fault P/R):    {agg.binary.recall():.1%}")
     print(f"F1:                    {agg.binary.f1():.1%}")
-    print(f"Mean Jaccard (semantic): {agg.mean_jaccard:.3f}")
-    print(f"Mean keyword hit rate:   {agg.mean_keyword_rate:.3f}")
-    print(f"Mean iterations:         {agg.mean_iterations:.2f}")
+    print(f"Mean Jaccard:          {agg.mean_jaccard:.3f}")
+    print(f"Mean keyword hit rate: {agg.mean_keyword_rate:.3f}")
+    print(f"Mean iterations:       {agg.mean_iterations:.2f}")
+    print(f"Grades (default):      {agg.grade_counts}")
+    print(f"Grades (strict):       {agg.grade_strict_counts}")
     for name, sa in split_aggs.items():
         print(
-            f"  [{name}] n={sa['n']} accuracy={sa['accuracy']:.1%} "
-            f"P={sa['precision']:.1%} R={sa['recall']:.1%} F1={sa['f1']:.1%}"
+            f"  [{name}] n={sa['n']} acc={sa['accuracy']:.1%} "
+            f"strict={sa['accuracy_strict']:.1%} "
+            f"wh={sa['wrong_hop_rate']:.1%} jac={sa['mean_jaccard']:.2f}"
         )
 
     payload = {
@@ -690,20 +720,34 @@ def main() -> int:
         "split_counts": splits,
         "pattern_catalog": cat_meta,
         "honesty": (
-            "Offline default = config-driven rule RCA on synthetic EvidencePack. "
-            "Not a claim of learned ML or live OTel quality. "
-            "Use --compare for rule vs Bedrock; evaluate_live_e2e.py for runtime."
+            "Offline default accuracy = config-driven rule RCA on synthetic "
+            "EvidencePack (L0 catalog regression). strict accuracy requires "
+            "class+service+Jaccard≥0.50 (no keyword-only). Not production ML. "
+            "Use evaluate_live_e2e.py for runtime; hard split for OOD."
         ),
+        "scoring": {
+            "default": "Jaccard≥0.40 OR GT⊂pred OR keywords+class (catalog regression)",
+            "strict": "class+service OK AND (Jaccard≥0.50 OR GT⊂pred); no keyword-only",
+        },
         "aggregate": {
             "n": agg.n,
             "correct": agg.correct,
             "accuracy": round(agg.accuracy, 4),
+            "correct_strict": agg.correct_strict,
+            "accuracy_strict": round(agg.accuracy_strict, 4),
+            "wrong_hop_count": agg.wrong_hop_count,
+            "wrong_hop_rate": round(agg.wrong_hop_rate, 4),
             "precision": round(agg.binary.precision(), 4),
             "recall": round(agg.binary.recall(), 4),
             "f1": round(agg.binary.f1(), 4),
+            "precision_strict": round(agg.binary_strict.precision(), 4),
+            "recall_strict": round(agg.binary_strict.recall(), 4),
+            "f1_strict": round(agg.binary_strict.f1(), 4),
             "mean_jaccard": round(agg.mean_jaccard, 4),
             "mean_keyword_rate": round(agg.mean_keyword_rate, 4),
             "mean_iterations": round(agg.mean_iterations, 4),
+            "grade_counts": agg.grade_counts,
+            "grade_strict_counts": agg.grade_strict_counts,
         },
         "by_split": split_aggs,
         "rows": [
@@ -713,6 +757,10 @@ def main() -> int:
                 "ground_truth": r.ground_truth,
                 "predicted": r.predicted,
                 "correct": r.correct,
+                "correct_strict": r.correct_strict,
+                "grade": r.grade,
+                "grade_strict": r.grade_strict,
+                "wrong_hop": r.wrong_hop,
                 "jaccard": round(r.jaccard, 4),
                 "keyword_rate": round(r.keyword_rate, 4),
                 "confidence": r.confidence,

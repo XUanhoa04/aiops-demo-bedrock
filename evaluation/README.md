@@ -2,60 +2,74 @@
 
 Ground-truth datasets + offline harnesses for **quantitative** quality of:
 
-1. **Anomaly Detection** — precision / recall / F1  
-2. **RCA Engine** — accuracy, P/R, Jaccard semantic similarity, mean iterations  
+1. **Anomaly Detection** — precision / recall / F1 (L0 clean + L1 hard)
+2. **RCA Engine** — default & **strict** accuracy, grades, wrong-hop rate, Jaccard
 
 ## Why a dataset?
 
 Without fixed scenarios, every model/prompt change is “it looked good in the demo”.  
-Suite size (approx.): **~40 RCA** (core + holdout) and **~28 anomaly** series.
-Rule RCA matches **`config/rca_patterns.yaml`** (config-driven), not hard-coded
-`if scenario_id` branches. This is a **regression suite** for that catalog — not
-learned ML quality.
+Suites:
 
-CI gates:
-- Anomaly overall F1 ≥ 0.70, **core** F1 ≥ 0.75  
-- RCA overall accuracy ≥ 0.70, **holdout** accuracy ≥ 0.55  
-- System must **beat naive baselines**
+| Suite | Approx size | Meaning |
+|-------|-------------|---------|
+| Anomaly L0 | ~28 | Clean synthetic; absolute thresholds allowed |
+| Anomaly L1 hard | ~16 | Stats-only (huge thr); noise / seasonal / MV |
+| RCA L0 | ~42 | Catalog regression (`config/rca_patterns.yaml`) |
+| RCA L1 hard | ~10 | OOD (DNS/TLS/disk) + ambiguous |
 
-Scoring is strict: fault-class match + wrong-hop service guards.
-Topology catalog: `config/service_topology.yaml` (checkout/payment/inventory/fraud).
+Rule RCA matches the **YAML catalog**, not hard-coded `if scenario_id` branches.  
+**L0 is a regression suite — not learned ML quality.**
+
+## Scoring honesty
+
+| Mode | Correct when |
+|------|----------------|
+| **default** | Jaccard ≥ 0.40 **or** GT⊂pred **or** keywords + class |
+| **strict** | class + service + (Jaccard ≥ 0.50 **or** GT⊂pred) |
+
+Also report: `wrong_hop_rate`, grade histogram (`exact/partial/wrong_hop/…`).
+
+## CI gates
+
+- Anomaly **L0** F1 ≥ 0.70, **core** F1 ≥ 0.75  
+- RCA **core** ≥ 0.85, **holdout** ≥ 0.55, **strict** ≥ 0.40, wrong-hop ≤ 0.25  
+- System must **beat weak baselines** (strong SRE baselines reported)
 
 ## Layout
 
 | Path | Purpose |
 |------|---------|
-| `rca_scenarios.yaml` | RCA core + holdout (split field) |
-| `anomaly_scenarios.yaml` | Anomaly core + holdout (uni + multivariate) |
+| `rca_scenarios.yaml` | RCA core + holdout |
+| `rca_scenarios_hard.yaml` | RCA OOD / hard |
+| `anomaly_scenarios.yaml` | Anomaly core + holdout |
+| `anomaly_scenarios_hard.yaml` | Anomaly hard (stats-only) |
 | `dataset_io.py` | Multi-file / split loader |
-| `scoring.py` | Jaccard, keyword, class/service guards, P/R/F1 |
-| `evaluate_rca.py` | Offline / online RCA; reports core vs holdout |
-| `evaluate_anomaly.py` | Offline hybrid detector; multivariate IF path |
+| `scoring.py` | Dual-mode RCA scoring, grades, P/R/F1 |
+| `evaluate_rca.py` | Offline / online RCA; default + strict |
+| `evaluate_anomaly.py` | Hybrid detector; L0 + hard |
+| `evaluate_baselines.py` | Weak + SRE baselines |
+| `evaluate_live_e2e.py` | Live chaos → RCA (+ optional ticket seed) |
+| `test_scoring.py` | Unit tests for scoring honesty |
 | `results/` | JSON outputs |
 
 ## Quick start
 
 ```bash
-# one command (Git Bash / WSL / Linux)
 bash scripts/run-evaluation.sh
+python evaluation/report_summary.py
 
-# or manually
-pip install pyyaml
-python evaluation/evaluate_anomaly.py --split all
-python evaluation/evaluate_rca.py --mode offline --split all
-# holdout only (anti-overfit check)
-python evaluation/evaluate_rca.py --split holdout
+# holdout / hard only
+python evaluation/evaluate_rca.py --split hard
+python evaluation/evaluate_anomaly.py --split hard
 ```
 
 Optional:
 
 ```bash
-# Live stack RCA API
-python evaluation/evaluate_rca.py --mode online
-
-# Dynamic telemetry on running compose
-python scripts/dynamic_load.py --profile demo
-python scripts/run_scenario.py --scenario rca-01-payment-db-pool
+# Live stack RCA
+python evaluation/evaluate_live_e2e.py --limit 10 --split core
+# Pure observability (no fault seed on ticket)
+python evaluation/evaluate_live_e2e.py --limit 5 --no-seed-context
 ```
 
 ## Metrics definitions
@@ -64,36 +78,27 @@ python scripts/run_scenario.py --scenario rca-01-payment-db-pool
 
 | Metric | Formula |
 |--------|---------|
-| Accuracy | `#correct / N` |
-| Correct | Fault-class + service guards; Jaccard ≥ 0.40 **or** GT⊂pred **or** ≥60% keywords *with* class match |
-| Precision / Recall | Fault scenarios: TP=correct, FN=miss; Normal scenarios: TN=correct, FP=false alarm |
-| Semantic similarity | Mean Jaccard token overlap |
-| Mean iterations | Rule=1; Bedrock+fallback may be 2 |
+| Accuracy (default/strict) | `#correct / N` under that mode |
+| Wrong-hop rate | fraction blaming wrong root service |
+| Precision / Recall | Fault: TP/FN; No-fault: TN/FP |
+| Semantic | Mean Jaccard token overlap |
 
 ### Anomaly
 
 | Metric | Definition |
 |--------|------------|
-| TP / FP / TN / FN | Final sample prediction vs `label: anomaly\|normal` |
-| Precision | TP/(TP+FP) |
-| Recall | TP/(TP+FN) |
-| F1 | 2PR/(P+R) |
+| TP/FP/TN/FN | Final sample vs `label` |
+| L0 aggregate | core + holdout only |
+| Hard aggregate | `split: hard` only |
 
-## Complete commands
+## What to put on a CV
 
-```bash
-# Offline (CI)
-bash scripts/run-evaluation.sh
-python evaluation/report_summary.py
+Prefer:
 
-# Rule vs Bedrock (optional AWS)
-python evaluation/evaluate_rca.py --split all --compare
+> strict RCA accuracy, hard-suite F1, live e2e accuracy + evidence completeness
 
-# Live stack e2e (compose up)
-python evaluation/evaluate_live_e2e.py --limit 5 --split core
-```
+Avoid leading with:
 
-Artifacts: `evaluation/results/*_latest.json`.  
+> offline default RCA 100% / anomaly F1 97% without the honesty layer story
+
 Deep guide: [`docs/EVALUATION.md`](../docs/EVALUATION.md).
-
-Gates: anomaly overall F1 ≥ 0.70 + core ≥ 0.75; RCA overall ≥ 0.70 + holdout ≥ 0.55; beat baselines.

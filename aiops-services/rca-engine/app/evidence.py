@@ -437,13 +437,20 @@ class EvidenceGatherer:
         end_ns = int(end.timestamp() * 1e9)
         limit = settings.max_log_lines
 
+        short = service.replace("-service", "")
         queries = [
-            f'{{service_name="{service}"}} |~ "(?i)error|exception|traceback|failed|5[0-9]{{2}}"',
+            f'{{service_name="{service}"}} |~ "(?i)error|exception|traceback|failed|5[0-9]{{2}}|fault_mode|pool|timeout"',
             f'{{service_name="{service}"}}',
-            f'{{job=~".*{service}.*"}} |~ "(?i)error|exception|fail"',
-            f'{{service="{service}"}} |~ "(?i)error|exception|fail"',
+            f'{{service_name="{short}"}} |~ "(?i)error|exception|fail|fault_mode"',
+            f'{{job=~".*{service}.*"}} |~ "(?i)error|exception|fail|fault_mode"',
+            f'{{job=~".*{short}.*"}} |~ "(?i)error|exception|fail|fault_mode"',
+            f'{{service="{service}"}} |~ "(?i)error|exception|fail|fault_mode"',
+            f'{{container=~".*{short}.*"}} |~ "(?i)error|exception|fail|fault_mode"',
+            f'{{compose_service=~".*{short}.*"}} |~ "(?i)error|exception|fail|fault_mode"',
+            # OTel resource attribute sometimes exported as label
+            f'{{exporter="OTLP"}} |~ "(?i){short}" |~ "(?i)error|fault_mode|pool"',
             # Fallback: any error lines in window (still better than inventing)
-            '{job=~".+"} |~ "(?i)error|exception|traceback"',
+            '{job=~".+"} |~ "(?i)error|exception|traceback|fault_mode|pool exhaust"',
         ]
 
         for logql in queries:

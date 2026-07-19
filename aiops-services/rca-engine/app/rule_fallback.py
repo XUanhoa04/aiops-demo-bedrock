@@ -130,6 +130,51 @@ def rule_based_rca(pack: EvidencePack) -> RCAResult:
         if svc:
             log_services.add(str(svc))
 
+    # Ticket-attached *structured* context (live e2e seed / operator fault notes)
+    # when Loki lag empties error_logs. Do NOT dump free-form title/description
+    # into the pattern blob — offline eval titles are English narratives and
+    # would pollute matching (e.g. "deploy chatter" → false post_deploy hit).
+    ticket_blob_parts: list[str] = []
+
+    def _maybe_add_evidence_text(text: str) -> None:
+        t = (text or "").strip()
+        if not t:
+            return
+        low = t.lower()
+        # Only treat as evidence-like if it looks like a log/fault seed
+        markers = (
+            "fault_mode=",
+            "fault_detail",
+            "error ",
+            "error:",
+            "exception",
+            "detail=",
+            "pool",
+            "timeout",
+            "traceback",
+        )
+        if any(m in low for m in markers) or low.startswith("{"):
+            # JSON description from live e2e may include fault_detail fields
+            ticket_blob_parts.append(t)
+
+    if isinstance(inc.get("description"), str):
+        _maybe_add_evidence_text(inc["description"])
+    if isinstance(ctx, dict):
+        for k in (
+            "explanation",
+            "fault_detail",
+            "fault_mode",
+            "chaos_fault_detail",
+            "seeded_log_line",
+        ):
+            if ctx.get(k):
+                ticket_blob_parts.append(str(ctx.get(k)))
+        seed = ctx.get("live_e2e") or ctx.get("evaluation_seed") or {}
+        if isinstance(seed, dict):
+            for k in ("fault_detail", "fault_mode", "log_line"):
+                if seed.get(k):
+                    ticket_blob_parts.append(str(seed.get(k)))
+
     if all_logs:
         sample = all_logs[0]
         line = sample.get("line") or ""
@@ -140,8 +185,15 @@ def rule_based_rca(pack: EvidencePack) -> RCAResult:
         if tid and not primary_trace:
             primary_trace = str(tid)
         conf = max(conf, conf + 10)
+    elif ticket_blob_parts:
+        evidence.append(
+            "log: no Loki lines; using ticket/context phrases for pattern match "
+            f"({ticket_blob_parts[0][:120]})"
+        )
 
-    log_blob = " ".join(str(row.get("line") or "") for row in all_logs[:40]).lower()
+    log_blob = " ".join(
+        [str(row.get("line") or "") for row in all_logs[:40]] + ticket_blob_parts
+    ).lower()
     log_svc_hint = _service_hint_from_logs(all_logs, service)
 
     matches = catalog.match_logs(

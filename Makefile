@@ -43,7 +43,7 @@ eval-compare:
 	bash scripts/run-evaluation.sh --compare
 
 eval-live:
-	python evaluation/evaluate_live_e2e.py --limit 5 --split core
+	python evaluation/evaluate_live_e2e.py --limit 10 --split core
 	python evaluation/report_summary.py
 
 report:
@@ -60,6 +60,7 @@ test:
 	PYTHONPATH=shared:aiops-services/rca-engine pytest -q aiops-services/rca-engine/tests
 	PYTHONPATH=shared:aiops-services/remediation pytest -q aiops-services/remediation/tests
 	PYTHONPATH=shared pytest -q apps/tests
+	pytest -q evaluation/test_scoring.py
 
 lint-compose:
 	docker compose config -q

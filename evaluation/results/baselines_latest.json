@@ -1,36 +1,86 @@
 {
-  "generated_at": "2026-07-18T15:56:45.516439+00:00",
-  "dataset": "D:\\project\\aiops-demo-bedrock\\evaluation\\rca_scenarios.yaml",
+  "generated_at": "2026-07-19T06:06:32.758874+00:00",
+  "dataset": [
+    "D:\\project\\aiops-demo-bedrock\\evaluation\\rca_scenarios.yaml",
+    "D:\\project\\aiops-demo-bedrock\\evaluation\\rca_scenarios_hard.yaml"
+  ],
   "results": {
     "system_rule_based": {
-      "n": 40,
-      "correct": 40,
-      "accuracy": 1.0,
-      "mean_jaccard": 0.7405,
-      "mean_keyword_rate": 0.8167
+      "n": 52,
+      "correct": 48,
+      "accuracy": 0.9231,
+      "correct_strict": 47,
+      "accuracy_strict": 0.9038,
+      "mean_jaccard": 0.6645,
+      "mean_keyword_rate": 0.7612
     },
     "baseline_random": {
-      "n": 40,
+      "n": 52,
       "correct": 0,
       "accuracy": 0.0,
-      "mean_jaccard": 0.0058,
+      "correct_strict": 0,
+      "accuracy_strict": 0.0,
+      "mean_jaccard": 0.0073,
       "mean_keyword_rate": 0.0
     },
     "baseline_always_error_rate": {
-      "n": 40,
-      "correct": 4,
-      "accuracy": 0.1,
-      "mean_jaccard": 0.1021,
-      "mean_keyword_rate": 0.2304
+      "n": 52,
+      "correct": 11,
+      "accuracy": 0.2115,
+      "correct_strict": 11,
+      "accuracy_strict": 0.2115,
+      "mean_jaccard": 0.1077,
+      "mean_keyword_rate": 0.2397
     },
     "baseline_empty": {
-      "n": 40,
+      "n": 52,
       "correct": 0,
       "accuracy": 0.0,
+      "correct_strict": 0,
+      "accuracy_strict": 0.0,
       "mean_jaccard": 0.0,
       "mean_keyword_rate": 0.0
+    },
+    "baseline_ticket_service": {
+      "n": 52,
+      "correct": 10,
+      "accuracy": 0.1923,
+      "correct_strict": 5,
+      "accuracy_strict": 0.0962,
+      "mean_jaccard": 0.0697,
+      "mean_keyword_rate": 0.2173
+    },
+    "baseline_highest_error_neighbor": {
+      "n": 52,
+      "correct": 9,
+      "accuracy": 0.1731,
+      "correct_strict": 5,
+      "accuracy_strict": 0.0962,
+      "mean_jaccard": 0.0817,
+      "mean_keyword_rate": 0.2923
+    },
+    "baseline_last_deploy": {
+      "n": 52,
+      "correct": 13,
+      "accuracy": 0.25,
+      "correct_strict": 13,
+      "accuracy_strict": 0.25,
+      "mean_jaccard": 0.124,
+      "mean_keyword_rate": 0.2192
+    },
+    "baseline_log_phrase_bag": {
+      "n": 52,
+      "correct": 42,
+      "accuracy": 0.8077,
+      "correct_strict": 40,
+      "accuracy_strict": 0.7692,
+      "mean_jaccard": 0.7309,
+      "mean_keyword_rate": 0.6724
     }
   },
   "system_beats_baselines": true,
-  "best_baseline_accuracy": 0.1
+  "system_beats_strong_baselines": true,
+  "best_baseline_accuracy": 0.2115,
+  "best_strong_baseline_accuracy": 0.8077,
+  "honesty": "Weak baselines are trivial. Strong baselines mimic SRE heuristics. System should beat weak; beating strong is desirable but not always true on OOD."
 }

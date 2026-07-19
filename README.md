@@ -279,15 +279,20 @@ bash scripts/run-evaluation.sh --compare
 python evaluation/evaluate_live_e2e.py --limit 5 --split core
 ```
 
-### Sample evaluation gates (offline)
+### Sample evaluation gates (offline) — honesty layers
 
-| Suite | Metric | Notes |
-|-------|--------|--------|
-| **Anomaly** (~28, core+holdout) | Overall F1 ≥ 0.70; **core** F1 ≥ 0.75 | Uni + seasonal + multivariate IF |
-| **RCA** (~42, core+holdout) | Overall ≥ 0.70; **holdout** ≥ 0.55 | `config/rca_patterns.yaml` + topology multi-hop |
-| **Baselines** | System must **beat** random / always-error / empty | Prevents “dataset overfit” theater |
+| Layer | Suite | Gate / report | CV tip |
+|-------|--------|---------------|--------|
+| **L0** | Anomaly clean (~28) | L0 F1 ≥ 0.70; core ≥ 0.75 | Catalog-friendly, can look high |
+| **L1** | Anomaly hard (~16) | Reported (stats-only / noise) | Prefer this F1 on a CV |
+| **L0** | RCA core/holdout (~42) | core ≥ 0.85; holdout ≥ 0.55 | Config pattern regression |
+| **strict** | Same RCA set | strict acc ≥ 0.40; wrong-hop ≤ 0.25 | No keyword-only “correct” |
+| **L1** | RCA hard OOD (~10) | Reported | DNS/TLS/disk must not invent pool |
+| **Baselines** | Weak + SRE heuristics | Must beat **weak**; strong reported | random / ticket-service / top-error |
+| **L2** | Live e2e | Optional; completeness reported | Real chaos + OTel path |
 
-Offline scores measure **catalog/regression coverage**, not production-perfect ML. Artifacts: `evaluation/results/*_latest.json`.
+Offline **default** scores measure **catalog/regression coverage**, not production ML.  
+Prefer reporting **strict + hard + live** on a resume. Artifacts: `evaluation/results/*_latest.json`.
 
 ### One-shot demo (for your video)
 

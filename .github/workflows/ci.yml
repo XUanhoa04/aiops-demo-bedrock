@@ -1,11 +1,12 @@
 # CI for AIOps demo — keep the CV repo green without needing AWS or a full stack.
 #
-# Gates
-# -----
+# Gates (honest layers)
+# ---------------------
 # 1. Compose file validity
-# 2. Unit tests (detector, decision-engine, engine-qa, incident-manager)
-# 3. Offline evaluation (anomaly P/R + RCA accuracy) with minimum thresholds
-# 4. Baseline comparison (system must beat naive baselines on RCA)
+# 2. Unit tests (services + scoring)
+# 3. Offline anomaly: L0 F1 ≥ 0.70, core ≥ 0.75 (hard reported)
+# 4. Offline RCA: core ≥ 0.85, holdout ≥ 0.55, strict ≥ 0.40, wrong-hop ≤ 0.25
+# 5. Baselines: system must beat weak baselines (SRE baselines reported)
 
 name: CI
 
@@ -63,8 +64,9 @@ jobs:
           pytest -q aiops-services/remediation/tests
           export PYTHONPATH="$ROOT/shared"
           pytest -q apps/tests
+          pytest -q evaluation/test_scoring.py
 
-      - name: Offline anomaly evaluation (gate overall F1 ≥ 0.70, core F1 ≥ 0.75)
+      - name: Offline anomaly evaluation (L0 F1 ≥ 0.70, core ≥ 0.75)
         env:
           PYTHONPATH: ${{ github.workspace }}/shared:${{ github.workspace }}/aiops-services/anomaly-detector:${{ github.workspace }}
         run: |
@@ -74,19 +76,22 @@ jobs:
           import json, sys
           from pathlib import Path
           d = json.loads(Path("evaluation/results/anomaly_ci.json").read_text())
-          f1 = float(d["aggregate"]["f1"])
+          l0 = d.get("aggregate_l0") or d["aggregate"]
+          f1 = float(l0["f1"])
           core = (d.get("by_split") or {}).get("core") or {}
           core_f1 = float(core.get("f1", f1))
-          print(f"anomaly F1={f1:.3f} core_f1={core_f1:.3f} n={d['aggregate'].get('n')}")
+          hard = d.get("aggregate_hard") or {}
+          hard_f1 = hard.get("f1")
+          print(f"anomaly L0 F1={f1:.3f} core_f1={core_f1:.3f} hard_f1={hard_f1} n_l0={l0.get('n')}")
           if f1 < 0.70:
-              print("FAIL: anomaly overall F1 below 0.70", file=sys.stderr)
+              print("FAIL: anomaly L0 F1 below 0.70", file=sys.stderr)
               sys.exit(1)
           if core_f1 < 0.75:
               print("FAIL: anomaly core F1 below 0.75", file=sys.stderr)
               sys.exit(1)
           PY
 
-      - name: Offline RCA evaluation (gate overall ≥ 0.70, holdout ≥ 0.55)
+      - name: Offline RCA evaluation (core/holdout + strict + wrong-hop)
         env:
           PYTHONPATH: ${{ github.workspace }}/shared:${{ github.workspace }}/aiops-services/rca-engine:${{ github.workspace }}
         run: |
@@ -96,30 +101,56 @@ jobs:
           import json, sys
           from pathlib import Path
           d = json.loads(Path("evaluation/results/rca_ci.json").read_text())
-          acc = float(d["aggregate"]["accuracy"])
-          hold = (d.get("by_split") or {}).get("holdout") or {}
-          hold_acc = float(hold.get("accuracy", acc))
-          core = (d.get("by_split") or {}).get("core") or {}
-          core_acc = float(core.get("accuracy", acc))
+          agg = d["aggregate"]
+          by = d.get("by_split") or {}
+          core_acc = float((by.get("core") or {}).get("accuracy", agg.get("accuracy", 0)))
+          hold_acc = float((by.get("holdout") or {}).get("accuracy", agg.get("accuracy", 0)))
+          hard = by.get("hard") or {}
+          strict = float(agg.get("accuracy_strict") or 0)
+          wh = float(agg.get("wrong_hop_rate") or 0)
           print(
-              f"RCA accuracy={acc:.3f} core={core_acc:.3f} holdout={hold_acc:.3f} "
-              f"n={d['aggregate']['n']}"
+              f"RCA core={core_acc:.3f} holdout={hold_acc:.3f} "
+              f"hard={hard.get('accuracy')} strict={strict:.3f} "
+              f"wrong_hop={wh:.3f} n={agg.get('n')}"
           )
-          if acc < 0.70:
-              print("FAIL: RCA overall accuracy below 0.70", file=sys.stderr)
+          print(f"grades={agg.get('grade_counts')} jaccard={agg.get('mean_jaccard')}")
+          if core_acc < 0.85:
+              print("FAIL: RCA core accuracy below 0.85", file=sys.stderr)
               sys.exit(1)
           if hold_acc < 0.55:
               print("FAIL: RCA holdout accuracy below 0.55", file=sys.stderr)
               sys.exit(1)
+          if strict < 0.40:
+              print("FAIL: RCA strict accuracy below 0.40", file=sys.stderr)
+              sys.exit(1)
+          if wh > 0.25:
+              print("FAIL: wrong-hop rate above 0.25", file=sys.stderr)
+              sys.exit(1)
           PY
 
-      - name: Baselines (system must beat random + always-error-rate)
+      - name: Baselines (system must beat weak baselines; report strong)
         env:
           PYTHONPATH: ${{ github.workspace }}/shared:${{ github.workspace }}/aiops-services/rca-engine:${{ github.workspace }}
         run: |
           python evaluation/evaluate_baselines.py \
             --output evaluation/results/baselines_ci.json \
             --require-beats-baselines
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d = json.loads(Path("evaluation/results/baselines_ci.json").read_text())
+          print("beats_weak=", d.get("system_beats_baselines"))
+          print("beats_strong=", d.get("system_beats_strong_baselines"))
+          for k, v in (d.get("results") or {}).items():
+              print(f"  {k}: acc={v.get('accuracy')} strict={v.get('accuracy_strict')}")
+          PY
+
+      - name: Evaluation summary
+        run: |
+          cp evaluation/results/anomaly_ci.json evaluation/results/anomaly_latest.json || true
+          cp evaluation/results/rca_ci.json evaluation/results/rca_latest.json || true
+          cp evaluation/results/baselines_ci.json evaluation/results/baselines_latest.json || true
+          python evaluation/report_summary.py
 
       - name: Upload evaluation artifacts
         if: always()

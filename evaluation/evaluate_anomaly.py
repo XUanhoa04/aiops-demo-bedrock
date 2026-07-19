@@ -148,8 +148,15 @@ def main() -> int:
     )
     p.add_argument(
         "--split",
-        choices=("all", "core", "holdout"),
+        choices=("all", "core", "holdout", "hard"),
         default="all",
+    )
+    p.add_argument(
+        "--extra-dataset",
+        type=Path,
+        action="append",
+        default=None,
+        help="Extra YAML (hard suite auto-loaded when present)",
     )
     p.add_argument(
         "--output",
@@ -158,21 +165,27 @@ def main() -> int:
     )
     args = p.parse_args()
 
+    extra = list(args.extra_dataset or [])
+    hard_path = EVAL_DIR / "anomaly_scenarios_hard.yaml"
+    if hard_path.is_file() and args.dataset is None and hard_path not in extra:
+        extra.append(hard_path)
     paths = resolve_dataset_paths(
         args.dataset,
         default_files=[EVAL_DIR / "anomaly_scenarios.yaml"],
+        extra=extra,
     )
     scenarios = load_scenarios(paths, split=args.split)
     splits = split_counts(scenarios)
     print(
         f"=== Anomaly Detection Evaluation n={len(scenarios)} "
-        f"split={args.split} core={splits['core']} holdout={splits['holdout']} ==="
+        f"split={args.split} core={splits.get('core', 0)} "
+        f"holdout={splits.get('holdout', 0)} hard={splits.get('hard', 0)} ==="
     )
     counts, rows = evaluate(scenarios)
 
     by_split: dict[str, Any] = {}
     if args.split == "all":
-        for name in ("core", "holdout"):
+        for name in ("core", "holdout", "hard"):
             sub = [r for r in rows if r.get("split") == name]
             if not sub:
                 continue
@@ -218,11 +231,21 @@ def main() -> int:
             f"P={sa['precision']:.1%} R={sa['recall']:.1%}"
         )
 
+    # L0 = core+holdout (catalog regression); hard is reported separately
+    l0_rows = [r for r in rows if r.get("split") in {"core", "holdout"}]
+    l0 = _counts_from_rows(l0_rows) if l0_rows else counts
+    hard_rows = [r for r in rows if r.get("split") == "hard"]
+    hard_c = _counts_from_rows(hard_rows) if hard_rows else None
+
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "dataset": [str(x) for x in paths],
         "split_filter": args.split,
         "split_counts": splits,
+        "honesty": (
+            "Core/holdout = clean synthetic (L0). Hard = stats-only / noisy "
+            "(absolute_threshold disabled via huge thr). Overall mixes both."
+        ),
         "aggregate": {
             "n": len(rows),
             "precision": round(counts.precision(), 4),
@@ -234,6 +257,32 @@ def main() -> int:
             "tn": counts.tn,
             "fn": counts.fn,
         },
+        "aggregate_l0": {
+            "n": len(l0_rows),
+            "precision": round(l0.precision(), 4),
+            "recall": round(l0.recall(), 4),
+            "f1": round(l0.f1(), 4),
+            "accuracy": round(l0.accuracy(), 4),
+            "tp": l0.tp,
+            "fp": l0.fp,
+            "tn": l0.tn,
+            "fn": l0.fn,
+        },
+        "aggregate_hard": (
+            {
+                "n": len(hard_rows),
+                "precision": round(hard_c.precision(), 4),
+                "recall": round(hard_c.recall(), 4),
+                "f1": round(hard_c.f1(), 4),
+                "accuracy": round(hard_c.accuracy(), 4),
+                "tp": hard_c.tp,
+                "fp": hard_c.fp,
+                "tn": hard_c.tn,
+                "fn": hard_c.fn,
+            }
+            if hard_c is not None
+            else None
+        ),
         "by_split": by_split,
         "rows": rows,
         "table": table,

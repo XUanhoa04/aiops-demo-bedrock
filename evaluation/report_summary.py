@@ -18,9 +18,9 @@ def load(name: str) -> dict:
 
 
 def main() -> int:
-    print("=" * 60)
-    print(" SentinelLoop evaluation summary")
-    print("=" * 60)
+    print("=" * 64)
+    print(" SentinelLoop evaluation summary (honest layers)")
+    print("=" * 64)
 
     anom = load("anomaly_latest.json")
     rca = load("rca_latest.json")
@@ -30,11 +30,23 @@ def main() -> int:
 
     if anom:
         a = anom.get("aggregate") or {}
-        print("\n[Anomaly offline]")
+        l0 = anom.get("aggregate_l0") or {}
+        hard = anom.get("aggregate_hard") or {}
+        print("\n[Anomaly]")
         print(
-            f"  n={a.get('n')} F1={a.get('f1')} P={a.get('precision')} "
-            f"R={a.get('recall')} Acc={a.get('accuracy')}"
+            f"  overall  n={a.get('n')} F1={a.get('f1')} "
+            f"P={a.get('precision')} R={a.get('recall')}"
         )
+        if l0:
+            print(
+                f"  L0 clean n={l0.get('n')} F1={l0.get('f1')} "
+                f"P={l0.get('precision')} R={l0.get('recall')}"
+            )
+        if hard:
+            print(
+                f"  L1 hard  n={hard.get('n')} F1={hard.get('f1')} "
+                f"P={hard.get('precision')} R={hard.get('recall')}"
+            )
         for split, sa in (anom.get("by_split") or {}).items():
             print(
                 f"  [{split}] n={sa.get('n')} F1={sa.get('f1')} "
@@ -43,19 +55,28 @@ def main() -> int:
 
     if rca:
         a = rca.get("aggregate") or {}
-        print("\n[RCA offline — primary mode in file]")
+        print("\n[RCA offline]")
         print(
-            f"  n={a.get('n')} Acc={a.get('accuracy')} "
-            f"P={a.get('precision')} R={a.get('recall')} F1={a.get('f1')}"
+            f"  default acc={a.get('accuracy')}  strict acc={a.get('accuracy_strict')}  "
+            f"wrong_hop={a.get('wrong_hop_rate')}  n={a.get('n')}"
+        )
+        print(
+            f"  mean_jaccard={a.get('mean_jaccard')}  "
+            f"grades={a.get('grade_counts')}"
         )
         for split, sa in (rca.get("by_split") or {}).items():
-            print(f"  [{split}] n={sa.get('n')} Acc={sa.get('accuracy')}")
+            print(
+                f"  [{split}] n={sa.get('n')} acc={sa.get('accuracy')} "
+                f"strict={sa.get('accuracy_strict')} wh={sa.get('wrong_hop_rate')}"
+            )
         cat = rca.get("pattern_catalog") or {}
         if cat:
             print(
-                f"  pattern_catalog: {cat.get('path')} "
-                f"n_patterns={cat.get('n_patterns')} sha={cat.get('sha256', '')[:12]}"
+                f"  pattern_catalog: n={cat.get('n_patterns')} "
+                f"sha={str(cat.get('sha256') or '')[:12]}"
             )
+        if rca.get("honesty"):
+            print(f"  note: {rca['honesty'][:120]}…")
 
     if compare:
         print("\n[RCA rule vs bedrock compare]")
@@ -66,22 +87,27 @@ def main() -> int:
     if base:
         print("\n[Baselines]")
         for k, v in (base.get("results") or {}).items():
-            print(f"  {k}: acc={v.get('accuracy')}")
-        print(f"  system_beats_baselines: {base.get('system_beats_baselines')}")
+            print(
+                f"  {k}: acc={v.get('accuracy')} strict={v.get('accuracy_strict')}"
+            )
+        print(f"  beats_weak:   {base.get('system_beats_baselines')}")
+        print(f"  beats_strong: {base.get('system_beats_strong_baselines')}")
 
     if live:
         a = live.get("aggregate") or {}
         print("\n[RCA live e2e]")
         print(
-            f"  n={a.get('n')} Acc={a.get('accuracy')} "
-            f"correct={a.get('correct')} skipped={a.get('skipped')}"
+            f"  n={a.get('n')} acc={a.get('accuracy')} strict={a.get('accuracy_strict')} "
+            f"completeness={a.get('mean_evidence_completeness')} "
+            f"seed={live.get('seed_context')}"
         )
-        print(f"  note: {live.get('note', '')[:100]}")
+        if live.get("note"):
+            print(f"  note: {live['note'][:140]}")
 
-    print("\n" + "=" * 60)
-    print(" Honesty: offline RCA measures config-driven rules on synthetic")
-    print(" evidence; live e2e uses real chaos+OTel; Bedrock is optional.")
-    print("=" * 60)
+    print("\n" + "=" * 64)
+    print(" Layers: L0 = catalog/clean synthetic · L1 hard/OOD · L2 live e2e")
+    print(" CV tip: report strict + live + hard; not only offline default 100%.")
+    print("=" * 64)
     return 0
 
 

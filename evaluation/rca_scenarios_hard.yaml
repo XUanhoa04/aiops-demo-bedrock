@@ -1,0 +1,298 @@
+version: "1.0"
+dataset_name: aiops-rca-hard-ood
+description: >
+  L1 hard / OOD RCA scenarios. Intentionally adversarial: unknown fault classes,
+  production-like log phrasing without catalog keywords, multi-fault ambiguity,
+  and cases where the correct answer is "insufficient evidence" (not invent pool).
+  Holdout-style freeze: do NOT extend rca_patterns.yaml just to pass these.
+scenarios:
+  # --- True OOD: system should NOT invent a catalog fault ---
+  - scenario_id: rca-hard-01-dns-resolution
+    split: hard
+    is_fault: true
+    description: DNS failures — no catalog pattern; expect insufficient or generic elevated, not pool/cache.
+    ticket_service: checkout-service
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: checkout-service
+          value: 0.38
+        - name: http_latency_p95_seconds
+          service: checkout-service
+          value: 0.9
+      logs:
+        - service: checkout-service
+          line: "ERROR dial tcp: lookup payment-service.default.svc on 10.96.0.10:53: no such host"
+        - service: checkout-service
+          line: "WARN Temporary failure in name resolution for payment-service"
+      traces:
+        - service: checkout-service
+          pattern: checkout fails before upstream span
+          duration_ms: 80
+          status: error
+    ground_truth_root_cause: insufficient evidence / unknown fault class (DNS) — out of catalog
+    affected_services:
+      - checkout-service
+    keywords:
+      - insufficient
+      - dns
+      - name resolution
+    expected_behavior: insufficient_or_generic_not_catalog
+
+  - scenario_id: rca-hard-02-tls-cert-expiry
+    split: hard
+    is_fault: true
+    description: TLS handshake failures from expired cert — OOD.
+    ticket_service: payment-service
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: payment-service
+          value: 0.55
+      logs:
+        - service: payment-service
+          line: "ERROR tls: failed to verify certificate: x509: certificate has expired or is not yet valid"
+        - service: payment-service
+          line: "ERROR handshake failure with psp-upstream.example.com"
+      traces:
+        - service: payment-service
+          pattern: /pay span error at tls
+          duration_ms: 120
+          status: error
+    ground_truth_root_cause: insufficient evidence / unknown fault class (TLS cert) — out of catalog
+    affected_services:
+      - payment-service
+    keywords:
+      - insufficient
+      - certificate
+      - tls
+    expected_behavior: insufficient_or_generic_not_catalog
+
+  - scenario_id: rca-hard-03-disk-full
+    split: hard
+    is_fault: true
+    description: Node disk pressure — OOD for app pattern catalog.
+    ticket_service: checkout-service
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: checkout-service
+          value: 0.22
+        - name: http_latency_p95_seconds
+          service: checkout-service
+          value: 1.2
+      logs:
+        - service: checkout-service
+          line: "ERROR no space left on device writing /var/lib/app/orders.db"
+        - service: checkout-service
+          line: "FATAL ENOSPC while rotating access log"
+    ground_truth_root_cause: insufficient evidence / unknown fault class (disk full) — out of catalog
+    affected_services:
+      - checkout-service
+    keywords:
+      - insufficient
+      - disk
+      - space
+    expected_behavior: insufficient_or_generic_not_catalog
+
+  - scenario_id: rca-hard-04-thundering-herd
+    split: hard
+    is_fault: true
+    description: Cache stampede without explicit 'cache miss' keyword variants that match loosely.
+    ticket_service: checkout-service
+    symptoms:
+      metrics:
+        - name: http_latency_p95_seconds
+          service: checkout-service
+          value: 2.1
+        - name: http_error_rate
+          service: checkout-service
+          value: 0.08
+        - name: http_request_rate
+          service: checkout-service
+          value: 120.0
+      logs:
+        - service: checkout-service
+          line: "WARN origin origin-db overloaded: 400 concurrent uncached product lookups"
+        - service: checkout-service
+          line: "INFO stampede detector: 92% of reads bypassing local store after key expiry wave"
+    ground_truth_root_cause: insufficient evidence / unknown fault class (thundering herd) — out of catalog
+    affected_services:
+      - checkout-service
+    keywords:
+      - insufficient
+      - stampede
+      - origin
+    expected_behavior: insufficient_or_generic_not_catalog
+
+  # --- Ambiguous multi-fault: primary should still be pool if present; hard if mixed ---
+  - scenario_id: rca-hard-05-ambiguous-pool-and-deploy
+    split: hard
+    is_fault: true
+    description: Deploy + pool logs together; either change or pool acceptable under default, strict prefers pool keywords.
+    ticket_service: payment-service
+    change_events:
+      - type: deploy
+        service: payment-service
+        message: "rolled out payment-service v2.4.1"
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: payment-service
+          value: 0.4
+      logs:
+        - service: payment-service
+          line: "INFO deploy completed payment-service v2.4.1 after release"
+        - service: payment-service
+          line: "ERROR could not obtain jdbc connection — maxPoolSize=20 remaining=0"
+      traces:
+        - service: payment-service
+          pattern: slow /pay
+          duration_ms: 1600
+          status: error
+    ground_truth_root_cause: payment-service database connection pool exhaustion
+    affected_services:
+      - payment-service
+    keywords:
+      - connection
+      - pool
+      - jdbc
+      - payment-service
+
+  # --- Production-like paraphrase without template phrase ---
+  - scenario_id: rca-hard-06-jdbc-oblique
+    split: hard
+    is_fault: true
+    description: JDBC language without literal 'pool exhaustion' template string.
+    ticket_service: payment-service
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: payment-service
+          value: 0.48
+      logs:
+        - service: payment-service
+          line: "ERROR org.postgresql.util.PSQLException: FATAL: remaining connection slots are reserved for non-replication superuser connections"
+        - service: payment-service
+          line: "ERROR HikariPool-1 - Connection is not available, request timed out after 30000ms"
+    ground_truth_root_cause: payment-service database connection pool exhaustion
+    affected_services:
+      - payment-service
+    keywords:
+      - connection
+      - hikari
+      - payment
+
+  # --- Metric-only elevated: should stay generic, not invent gateway ---
+  - scenario_id: rca-hard-07-metric-only-no-logs
+    split: hard
+    is_fault: true
+    description: High error, empty logs/traces — metric-only elevated is correct; inventing pool is wrong.
+    ticket_service: checkout-service
+    sources_ok:
+      prometheus: true
+      loki: true
+      tempo: true
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: checkout-service
+          value: 0.33
+      logs: []
+      traces: []
+    ground_truth_root_cause: elevated http_error_rate on checkout-service with insufficient log/trace corroboration
+    affected_services:
+      - checkout-service
+    keywords:
+      - elevated
+      - http_error_rate
+      - insufficient
+
+  # --- Healthy noise: must not invent fault ---
+  - scenario_id: rca-hard-08-benign-noise-logs
+    split: hard
+    is_fault: false
+    description: Info-level deploy chatter without error elevation — no-fault.
+    ticket_service: checkout-service
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: checkout-service
+          value: 0.01
+        - name: http_request_rate
+          service: checkout-service
+          value: 12.0
+      logs:
+        - service: checkout-service
+          line: "INFO readiness probe ok"
+        - service: checkout-service
+          line: "DEBUG redis GET product:42 hit"
+    ground_truth_root_cause: normal traffic without application fault / insufficient evidence of outage
+    affected_services:
+      - checkout-service
+    keywords:
+      - insufficient
+      - normal
+
+  # --- Conflicting neighbors without decisive pattern ---
+  - scenario_id: rca-hard-09-conflicting-neighbors
+    split: hard
+    is_fault: true
+    description: Both checkout and payment elevated; logs only generic 502 — generic elevated OK, wrong concrete class is bad under strict.
+    ticket_service: checkout-service
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: checkout-service
+          value: 0.25
+        - name: http_error_rate
+          service: payment-service
+          value: 0.28
+      logs:
+        - service: checkout-service
+          line: "ERROR upstream returned 502"
+        - service: payment-service
+          line: "ERROR request failed status=502"
+      traces:
+        - service: checkout-service
+          pattern: multi-hop error
+          duration_ms: 900
+          status: error
+    ground_truth_root_cause: elevated http_error_rate on checkout-service with insufficient log/trace corroboration
+    affected_services:
+      - checkout-service
+      - payment-service
+    keywords:
+      - elevated
+      - error
+
+  # --- Wrong symptom service, root in inventory with weak logs ---
+  - scenario_id: rca-hard-10-cascade-weak-inventory
+    split: hard
+    is_fault: true
+    description: Ticket on checkout; inventory has lock language but sparse.
+    ticket_service: checkout-service
+    symptoms:
+      metrics:
+        - name: http_error_rate
+          service: checkout-service
+          value: 0.3
+        - name: http_latency_p95_seconds
+          service: inventory-service
+          value: 1.9
+        - name: http_error_rate
+          service: inventory-service
+          value: 0.42
+      logs:
+        - service: inventory-service
+          line: "ERROR sku lock wait timeout on inventory reserve path"
+        - service: checkout-service
+          line: "ERROR reserve failed 503"
+    ground_truth_root_cause: inventory-service stock lock / DB contention causing checkout latency
+    affected_services:
+      - inventory-service
+      - checkout-service
+    keywords:
+      - inventory
+      - lock
+      - stock

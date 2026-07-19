@@ -1,0 +1,342 @@
+version: "1.0"
+dataset_name: aiops-anomaly-hard
+description: >
+  L1 hard anomaly suite. Statistical methods only — absolute_threshold set
+  extremely high so "manual" threshold cannot carry the label. Includes noise,
+  missing values (as null skipped), concept drift, near-threshold, and
+  multivariate conflict. Expect F1 well below the clean core suite.
+scenarios:
+  # --- Noise: anomaly buried in high variance (harder for z-score) ---
+  - scenario_id: ad-hard-01-noisy-spike
+    split: hard
+    mode: univariate
+    description: True spike amid high baseline noise
+    service: checkout-service
+    metric_name: http_error_rate
+    label: anomaly
+    # high absolute_threshold disables manual path in force_score
+    absolute_threshold: 9.0
+    values:
+      - 0.08
+      - 0.12
+      - 0.05
+      - 0.15
+      - 0.09
+      - 0.14
+      - 0.06
+      - 0.11
+      - 0.13
+      - 0.42
+
+  - scenario_id: ad-hard-02-noisy-normal
+    split: hard
+    mode: univariate
+    description: Noisy but no real level shift (TN under stats-only)
+    service: checkout-service
+    metric_name: http_error_rate
+    label: normal
+    absolute_threshold: 9.0
+    values:
+      - 0.08
+      - 0.12
+      - 0.05
+      - 0.15
+      - 0.09
+      - 0.14
+      - 0.06
+      - 0.11
+      - 0.13
+      - 0.10
+
+  # --- Slow drift (gradual) without crossing a "demo" absolute thr ---
+  - scenario_id: ad-hard-03-slow-drift-anomaly
+    split: hard
+    mode: univariate
+    description: Very gradual error rise — last point elevated vs early baseline
+    service: payment-service
+    metric_name: http_error_rate
+    label: anomaly
+    absolute_threshold: 9.0
+    values:
+      - 0.02
+      - 0.025
+      - 0.03
+      - 0.035
+      - 0.04
+      - 0.05
+      - 0.06
+      - 0.08
+      - 0.10
+      - 0.14
+
+  - scenario_id: ad-hard-04-slow-drift-normal
+    split: hard
+    mode: univariate
+    description: Mild upward noise within healthy band
+    service: payment-service
+    metric_name: http_error_rate
+    label: normal
+    absolute_threshold: 9.0
+    values:
+      - 0.02
+      - 0.022
+      - 0.021
+      - 0.025
+      - 0.023
+      - 0.024
+      - 0.026
+      - 0.025
+      - 0.027
+      - 0.028
+
+  # --- Near-threshold without absolute helper ---
+  - scenario_id: ad-hard-05-near-anomaly-stats
+    split: hard
+    mode: univariate
+    description: Final point only mildly high vs short history
+    service: checkout-service
+    metric_name: http_error_rate
+    label: anomaly
+    absolute_threshold: 9.0
+    values:
+      - 0.01
+      - 0.01
+      - 0.012
+      - 0.011
+      - 0.01
+      - 0.012
+      - 0.01
+      - 0.011
+      - 0.01
+      - 0.09
+
+  - scenario_id: ad-hard-06-near-normal-stats
+    split: hard
+    mode: univariate
+    description: Mild bump still consistent with noise
+    service: checkout-service
+    metric_name: http_error_rate
+    label: normal
+    absolute_threshold: 9.0
+    values:
+      - 0.01
+      - 0.012
+      - 0.011
+      - 0.013
+      - 0.01
+      - 0.014
+      - 0.012
+      - 0.011
+      - 0.013
+      - 0.03
+
+  # --- Latency with seasonality + spike ---
+  - scenario_id: ad-hard-07-seasonal-latency-spike
+    split: hard
+    mode: univariate
+    description: Seasonal latency then true spike
+    service: payment-service
+    metric_name: http_latency_p95_seconds
+    label: anomaly
+    absolute_threshold: 99.0
+    values:
+      - 0.2
+      - 0.25
+      - 0.28
+      - 0.25
+      - 0.2
+      - 0.15
+      - 0.12
+      - 0.15
+      - 0.2
+      - 0.25
+      - 0.28
+      - 0.25
+      - 0.2
+      - 0.15
+      - 0.12
+      - 0.15
+      - 0.2
+      - 0.25
+      - 0.28
+      - 1.8
+
+  - scenario_id: ad-hard-08-seasonal-latency-normal
+    split: hard
+    mode: univariate
+    description: Seasonal latency without spike
+    service: payment-service
+    metric_name: http_latency_p95_seconds
+    label: normal
+    absolute_threshold: 99.0
+    values:
+      - 0.2
+      - 0.25
+      - 0.28
+      - 0.25
+      - 0.2
+      - 0.15
+      - 0.12
+      - 0.15
+      - 0.2
+      - 0.25
+      - 0.28
+      - 0.25
+      - 0.2
+      - 0.15
+      - 0.12
+      - 0.15
+      - 0.2
+      - 0.25
+      - 0.28
+      - 0.25
+
+  # --- Multivariate: joint outlier vs rate-only change ---
+  - scenario_id: ad-hard-09-mv-joint-outlier
+    split: hard
+    mode: multivariate
+    description: Rate drop + error + latency joint outlier
+    service: checkout-service
+    label: anomaly
+    absolute_threshold: 9.0
+    features_series:
+      - {http_request_rate: 20.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 21.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 19.0, http_error_rate: 0.03, http_latency_p95_seconds: 0.06}
+      - {http_request_rate: 20.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 22.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 20.0, http_error_rate: 0.03, http_latency_p95_seconds: 0.06}
+      - {http_request_rate: 19.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 21.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 20.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 20.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 3.0, http_error_rate: 0.18, http_latency_p95_seconds: 1.4}
+
+  - scenario_id: ad-hard-10-mv-traffic-only
+    split: hard
+    mode: multivariate
+    description: Traffic scale-up alone should often be TN (not joint fault)
+    service: checkout-service
+    label: normal
+    absolute_threshold: 9.0
+    features_series:
+      - {http_request_rate: 20.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 21.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 19.0, http_error_rate: 0.03, http_latency_p95_seconds: 0.06}
+      - {http_request_rate: 20.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 22.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 20.0, http_error_rate: 0.03, http_latency_p95_seconds: 0.06}
+      - {http_request_rate: 19.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 21.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 20.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 20.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.05}
+      - {http_request_rate: 45.0, http_error_rate: 0.02, http_latency_p95_seconds: 0.07}
+
+  # --- Flapping ends normal ---
+  - scenario_id: ad-hard-11-flapping-ends-normal
+    split: hard
+    mode: univariate
+    description: Two spikes then recovery — final label normal
+    service: payment-service
+    metric_name: http_error_rate
+    label: normal
+    absolute_threshold: 9.0
+    values:
+      - 0.02
+      - 0.35
+      - 0.03
+      - 0.40
+      - 0.04
+      - 0.03
+      - 0.02
+      - 0.02
+      - 0.01
+      - 0.02
+
+  - scenario_id: ad-hard-12-flapping-ends-anomaly
+    split: hard
+    mode: univariate
+    description: Flapping ends on spike
+    service: payment-service
+    metric_name: http_error_rate
+    label: anomaly
+    absolute_threshold: 9.0
+    values:
+      - 0.02
+      - 0.35
+      - 0.03
+      - 0.04
+      - 0.03
+      - 0.02
+      - 0.02
+      - 0.01
+      - 0.02
+      - 0.38
+
+  # --- Short series cold start (stats weak) ---
+  - scenario_id: ad-hard-13-short-anomaly
+    split: hard
+    mode: univariate
+    description: Very short series with spike
+    service: checkout-service
+    metric_name: http_error_rate
+    label: anomaly
+    absolute_threshold: 9.0
+    values:
+      - 0.02
+      - 0.03
+      - 0.5
+
+  - scenario_id: ad-hard-14-short-normal
+    split: hard
+    mode: univariate
+    description: Very short healthy series
+    service: checkout-service
+    metric_name: http_error_rate
+    label: normal
+    absolute_threshold: 9.0
+    values:
+      - 0.02
+      - 0.03
+      - 0.02
+
+  # --- Latency cliff without absolute thr ---
+  - scenario_id: ad-hard-15-latency-cliff
+    split: hard
+    mode: univariate
+    description: Latency cliff
+    service: fraud-service
+    metric_name: http_latency_p95_seconds
+    label: anomaly
+    absolute_threshold: 99.0
+    values:
+      - 0.05
+      - 0.06
+      - 0.05
+      - 0.07
+      - 0.06
+      - 0.05
+      - 0.06
+      - 0.05
+      - 0.07
+      - 2.5
+
+  - scenario_id: ad-hard-16-rps-variance-normal
+    split: hard
+    mode: univariate
+    description: Bursty RPS but within normal variance
+    service: inventory-service
+    metric_name: http_request_rate
+    label: normal
+    absolute_threshold: 999.0
+    values:
+      - 10
+      - 18
+      - 12
+      - 22
+      - 11
+      - 19
+      - 14
+      - 20
+      - 13
+      - 17
