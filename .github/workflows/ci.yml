@@ -40,6 +40,7 @@ jobs:
           pip install -r aiops-services/decision-engine/requirements.txt
           pip install -r aiops-services/engine-qa/requirements.txt
           pip install -r aiops-services/incident-manager/requirements.txt
+          pip install -r aiops-services/rca-engine/requirements.txt
           pip install -r aiops-services/remediation/requirements.txt
           pip install pyyaml pytest
 
@@ -47,6 +48,8 @@ jobs:
         run: docker compose config -q
 
       - name: Unit tests (per-service PYTHONPATH — each service uses package name `app`)
+        env:
+          OTEL_SDK_DISABLED: "true"
         run: |
           set -e
           ROOT="${{ github.workspace }}"
