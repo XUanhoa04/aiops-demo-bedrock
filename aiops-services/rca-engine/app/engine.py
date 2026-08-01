@@ -206,10 +206,15 @@ class RCAEngine:
         body = {
             "incident_id": incident_id,
             "actions": list(result.suggested_actions or []),
-            "auto_execute_low_risk": True,
+            "auto_execute_low_risk": False,
         }
+        headers = (
+            {"X-API-Key": settings.remediation_api_key}
+            if settings.remediation_api_key
+            else None
+        )
         try:
-            resp = self._http.post(url, json=body)
+            resp = self._http.post(url, json=body, headers=headers)
             if resp.status_code >= 400:
                 logger.warning(
                     "remediation fan-out HTTP %s: %s",
@@ -286,7 +291,7 @@ class RCAEngine:
 
         if not self.bedrock.configured:
             logger.warning("Bedrock not configured — using rule-based RCA")
-            return rule_based_rca(pack), "rule_based", "credentials missing", None
+            return rule_based_rca(pack), "rule_based", "AWS credential chain unavailable", None
 
         try:
             result, usage = self.bedrock.analyze(pack)

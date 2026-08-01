@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-19T06:05:41.345033+00:00",
+  "generated_at": "2026-08-01T10:28:51.643344+00:00",
   "dataset": [
     "D:\\project\\aiops-demo-bedrock\\evaluation\\anomaly_scenarios.yaml",
     "D:\\project\\aiops-demo-bedrock\\evaluation\\anomaly_scenarios_hard.yaml"
@@ -11,39 +11,39 @@
     "hard": 16,
     "other": 0
   },
-  "honesty": "Core/holdout = clean synthetic (L0). Hard = stats-only / noisy (absolute_threshold disabled via huge thr). Overall mixes both.",
+  "honesty": "All scenarios execute the production evaluate_service path. Core/holdout are clean synthetic L0; hard is noisy synthetic.",
   "aggregate": {
     "n": 44,
-    "precision": 0.875,
-    "recall": 0.875,
-    "f1": 0.875,
-    "accuracy": 0.8636,
-    "tp": 21,
-    "fp": 3,
-    "tn": 17,
-    "fn": 3
+    "precision": 0.9231,
+    "recall": 1.0,
+    "f1": 0.96,
+    "accuracy": 0.9545,
+    "tp": 24,
+    "fp": 2,
+    "tn": 18,
+    "fn": 0
   },
   "aggregate_l0": {
     "n": 28,
-    "precision": 0.9412,
+    "precision": 1.0,
     "recall": 1.0,
-    "f1": 0.9697,
-    "accuracy": 0.9643,
+    "f1": 1.0,
+    "accuracy": 1.0,
     "tp": 16,
-    "fp": 1,
-    "tn": 11,
+    "fp": 0,
+    "tn": 12,
     "fn": 0
   },
   "aggregate_hard": {
     "n": 16,
-    "precision": 0.7143,
-    "recall": 0.625,
-    "f1": 0.6667,
-    "accuracy": 0.6875,
-    "tp": 5,
+    "precision": 0.8,
+    "recall": 1.0,
+    "f1": 0.8889,
+    "accuracy": 0.875,
+    "tp": 8,
     "fp": 2,
     "tn": 6,
-    "fn": 3
+    "fn": 0
   },
   "by_split": {
     "core": {
@@ -59,25 +59,25 @@
     },
     "holdout": {
       "n": 20,
-      "precision": 0.9231,
+      "precision": 1.0,
       "recall": 1.0,
-      "f1": 0.96,
-      "accuracy": 0.95,
+      "f1": 1.0,
+      "accuracy": 1.0,
       "tp": 12,
-      "fp": 1,
-      "tn": 7,
+      "fp": 0,
+      "tn": 8,
       "fn": 0
     },
     "hard": {
       "n": 16,
-      "precision": 0.7143,
-      "recall": 0.625,
-      "f1": 0.6667,
-      "accuracy": 0.6875,
-      "tp": 5,
+      "precision": 0.8,
+      "recall": 1.0,
+      "f1": 0.8889,
+      "accuracy": 0.875,
+      "tp": 8,
       "fp": 2,
       "tn": 6,
-      "fn": 3
+      "fn": 0
     }
   },
   "rows": [
@@ -88,10 +88,11 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 3.0,
+      "score": 99.3141,
       "methods": [
         "zscore",
-        "manual"
+        "ewma_zscore",
+        "threshold"
       ],
       "last_value": 0.45
     },
@@ -102,10 +103,11 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 2.9993,
+      "score": 145.009,
       "methods": [
         "zscore",
-        "manual"
+        "ewma_zscore",
+        "threshold"
       ],
       "last_value": 1.5
     },
@@ -116,9 +118,10 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 2.1191,
+      "score": 3.1557,
       "methods": [
-        "manual"
+        "zscore",
+        "threshold"
       ],
       "last_value": 0.3
     },
@@ -129,7 +132,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 1.0835,
+      "score": 1.2247,
       "methods": [],
       "last_value": 0.01
     },
@@ -140,7 +143,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 0.488,
+      "score": 0.5213,
       "methods": [],
       "last_value": 0.03
     },
@@ -151,7 +154,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 0.2295,
+      "score": 0.2789,
       "methods": [],
       "last_value": 0.05
     },
@@ -162,9 +165,10 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 2.9665,
+      "score": 20.9793,
       "methods": [
-        "zscore"
+        "zscore",
+        "ewma_zscore"
       ],
       "last_value": 1.0
     },
@@ -175,7 +179,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 1.6645,
+      "score": 2.1089,
       "methods": [],
       "last_value": 0.14
     },
@@ -186,11 +190,12 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 4.7236,
+      "score": 27.9076,
       "methods": [
         "zscore",
+        "ewma_zscore",
         "stl",
-        "manual"
+        "threshold"
       ],
       "last_value": 0.42
     },
@@ -201,7 +206,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 1.2018,
+      "score": 1.2681,
       "methods": [],
       "last_value": 0.049
     },
@@ -212,11 +217,11 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 3.9982,
+      "score": 137.2946,
       "methods": [
         "zscore",
-        "threshold",
-        "isolation_forest"
+        "ewma_zscore",
+        "threshold"
       ],
       "last_value": {
         "http_request_rate": 2.0,
@@ -229,12 +234,10 @@
       "split": "holdout",
       "mode": "multivariate",
       "label": "normal",
-      "predicted_anomaly": true,
-      "outcome": "FP",
-      "score": 1.9765,
-      "methods": [
-        "isolation_forest"
-      ],
+      "predicted_anomaly": false,
+      "outcome": "TN",
+      "score": 2.3434,
+      "methods": [],
       "last_value": {
         "http_request_rate": 19.5,
         "http_error_rate": 0.025,
@@ -250,7 +253,7 @@
       "outcome": "TP",
       "score": 3.6667,
       "methods": [
-        "manual"
+        "threshold"
       ],
       "last_value": 0.55
     },
@@ -263,7 +266,7 @@
       "outcome": "TP",
       "score": 2.3333,
       "methods": [
-        "manual"
+        "threshold"
       ],
       "last_value": 0.35
     },
@@ -274,9 +277,9 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 1.7457,
+      "score": 2.2627,
       "methods": [
-        "manual"
+        "threshold"
       ],
       "last_value": 0.16
     },
@@ -287,7 +290,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 1.7253,
+      "score": 2.2229,
       "methods": [],
       "last_value": 0.149
     },
@@ -298,7 +301,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 0.609,
+      "score": 0.6556,
       "methods": [],
       "last_value": 0.02
     },
@@ -309,9 +312,9 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 1.8015,
+      "score": 2.3749,
       "methods": [
-        "manual"
+        "threshold"
       ],
       "last_value": 1.3
     },
@@ -335,7 +338,7 @@
       "outcome": "TP",
       "score": 3.0,
       "methods": [
-        "manual"
+        "threshold"
       ],
       "last_value": 0.45
     },
@@ -346,10 +349,12 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 5.3421,
+      "score": 43.0738,
       "methods": [
         "zscore",
-        "manual"
+        "ewma_zscore",
+        "stl",
+        "threshold"
       ],
       "last_value": 0.5
     },
@@ -360,7 +365,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 0.8287,
+      "score": 0.853,
       "methods": [],
       "last_value": 0.0312
     },
@@ -371,11 +376,11 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 4.2426,
+      "score": 28.0,
       "methods": [
         "zscore",
-        "threshold",
-        "isolation_forest"
+        "ewma_zscore",
+        "threshold"
       ],
       "last_value": {
         "http_request_rate": 1.5,
@@ -390,9 +395,10 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 2.9822,
+      "score": 28.931,
       "methods": [
-        "zscore"
+        "zscore",
+        "ewma_zscore"
       ],
       "last_value": 0.5
     },
@@ -403,7 +409,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 1.1608,
+      "score": 1.3269,
       "methods": [],
       "last_value": 0.79
     },
@@ -414,9 +420,9 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 1.592,
+      "score": 1.9799,
       "methods": [
-        "manual"
+        "threshold"
       ],
       "last_value": 0.95
     },
@@ -440,7 +446,7 @@
       "outcome": "TP",
       "score": 1.875,
       "methods": [
-        "manual"
+        "threshold"
       ],
       "last_value": 1.5
     },
@@ -451,9 +457,11 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 2.8464,
+      "score": 9.5,
       "methods": [
-        "zscore"
+        "zscore",
+        "ewma_zscore",
+        "threshold"
       ],
       "last_value": 0.42
     },
@@ -464,7 +472,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 0.2042,
+      "score": 0.6667,
       "methods": [],
       "last_value": 0.1
     },
@@ -473,10 +481,12 @@
       "split": "hard",
       "mode": "univariate",
       "label": "anomaly",
-      "predicted_anomaly": false,
-      "outcome": "FN",
-      "score": 2.2561,
-      "methods": [],
+      "predicted_anomaly": true,
+      "outcome": "TP",
+      "score": 3.6081,
+      "methods": [
+        "zscore"
+      ],
       "last_value": 0.14
     },
     {
@@ -486,7 +496,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 1.5804,
+      "score": 1.9598,
       "methods": [],
       "last_value": 0.028
     },
@@ -497,9 +507,10 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 2.9984,
+      "score": 97.1631,
       "methods": [
-        "zscore"
+        "zscore",
+        "ewma_zscore"
       ],
       "last_value": 0.09
     },
@@ -510,9 +521,10 @@
       "label": "normal",
       "predicted_anomaly": true,
       "outcome": "FP",
-      "score": 2.9248,
+      "score": 13.8605,
       "methods": [
-        "zscore"
+        "zscore",
+        "ewma_zscore"
       ],
       "last_value": 0.03
     },
@@ -523,9 +535,11 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 4.3112,
+      "score": 29.9924,
       "methods": [
-        "zscore"
+        "zscore",
+        "ewma_zscore",
+        "threshold"
       ],
       "last_value": 1.8
     },
@@ -536,7 +550,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 0.7792,
+      "score": 0.8125,
       "methods": [],
       "last_value": 0.25
     },
@@ -547,9 +561,10 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 3.1621,
+      "score": 381.8295,
       "methods": [
         "zscore",
+        "ewma_zscore",
         "threshold",
         "isolation_forest"
       ],
@@ -566,9 +581,10 @@
       "label": "normal",
       "predicted_anomaly": true,
       "outcome": "FP",
-      "score": 3.141,
+      "score": 30.1924,
       "methods": [
         "zscore",
+        "ewma_zscore",
         "isolation_forest"
       ],
       "last_value": {
@@ -584,7 +600,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 0.5243,
+      "score": 0.5613,
       "methods": [],
       "last_value": 0.02
     },
@@ -593,10 +609,14 @@
       "split": "hard",
       "mode": "univariate",
       "label": "anomaly",
-      "predicted_anomaly": false,
-      "outcome": "FN",
-      "score": 2.104,
-      "methods": [],
+      "predicted_anomaly": true,
+      "outcome": "TP",
+      "score": 5.6907,
+      "methods": [
+        "zscore",
+        "ewma_zscore",
+        "threshold"
+      ],
       "last_value": 0.38
     },
     {
@@ -604,10 +624,12 @@
       "split": "hard",
       "mode": "univariate",
       "label": "anomaly",
-      "predicted_anomaly": false,
-      "outcome": "FN",
-      "score": 0.0556,
-      "methods": [],
+      "predicted_anomaly": true,
+      "outcome": "TP",
+      "score": 3.3333,
+      "methods": [
+        "threshold"
+      ],
       "last_value": 0.5
     },
     {
@@ -617,7 +639,7 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 0.0022,
+      "score": 0.1333,
       "methods": [],
       "last_value": 0.02
     },
@@ -628,9 +650,11 @@
       "label": "anomaly",
       "predicted_anomaly": true,
       "outcome": "TP",
-      "score": 2.9998,
+      "score": 310.8441,
       "methods": [
-        "zscore"
+        "zscore",
+        "ewma_zscore",
+        "threshold"
       ],
       "last_value": 2.5
     },
@@ -641,10 +665,10 @@
       "label": "normal",
       "predicted_anomaly": false,
       "outcome": "TN",
-      "score": 0.3563,
+      "score": 0.3782,
       "methods": [],
       "last_value": 17.0
     }
   ],
-  "table": "scenario_id                        | split   | label   | pred | out | score\n-----------------------------------+---------+---------+------+-----+------\nad-01-error-rate-spike             | core    | anomaly | Y    | TP  | 3.00 \nad-02-latency-spike                | core    | anomaly | Y    | TP  | 3.00 \nad-03-gradual-error-rise           | core    | anomaly | Y    | TP  | 2.12 \nad-04-normal-flat                  | core    | normal  | N    | TN  | 1.08 \nad-05-normal-noise                 | core    | normal  | N    | TN  | 0.49 \nad-06-latency-normal               | core    | normal  | N    | TN  | 0.23 \nad-07-request-drop                 | core    | anomaly | Y    | TP  | 2.97 \nad-08-borderline-error             | core    | normal  | N    | TN  | 1.66 \nad-09-seasonal-with-spike          | holdout | anomaly | Y    | TP  | 4.72 \nad-10-seasonal-normal              | holdout | normal  | N    | TN  | 1.20 \nad-11-multivariate-joint-outlier   | holdout | anomaly | Y    | TP  | 4.00 \nad-12-multivariate-normal          | holdout | normal  | Y    | FP  | 1.98 \nad-13-cold-start-spike             | holdout | anomaly | Y    | TP  | 3.67 \nad-14-flapping-ends-high           | holdout | anomaly | Y    | TP  | 2.33 \nad-15-near-threshold-anomaly       | holdout | anomaly | Y    | TP  | 1.75 \nad-16-near-threshold-normal        | holdout | normal  | N    | TN  | 1.73 \nad-17-recovery-last-normal         | holdout | normal  | N    | TN  | 0.61 \nad-18-gradual-latency              | holdout | anomaly | Y    | TP  | 1.80 \nad-19-oscillating-noise            | holdout | normal  | N    | TN  | 0.33 \nad-20-double-spike                 | holdout | anomaly | Y    | TP  | 3.00 \nad-21-seasonal-long-spike          | holdout | anomaly | Y    | TP  | 5.34 \nad-22-seasonal-long-normal         | holdout | normal  | N    | TN  | 0.83 \nad-23-multivariate-error-latency   | holdout | anomaly | Y    | TP  | 4.24 \nad-24-rps-only-cliff               | holdout | anomaly | Y    | TP  | 2.98 \nad-25-latency-borderline-normal    | holdout | normal  | N    | TN  | 1.16 \nad-26-latency-borderline-anomaly   | holdout | anomaly | Y    | TP  | 1.59 \nad-27-cold-start-normal            | holdout | normal  | N    | TN  | 0.10 \nad-28-double-latency-spike         | holdout | anomaly | Y    | TP  | 1.88 \nad-hard-01-noisy-spike             | hard    | anomaly | Y    | TP  | 2.85 \nad-hard-02-noisy-normal            | hard    | normal  | N    | TN  | 0.20 \nad-hard-03-slow-drift-anomaly      | hard    | anomaly | N    | FN  | 2.26 \nad-hard-04-slow-drift-normal       | hard    | normal  | N    | TN  | 1.58 \nad-hard-05-near-anomaly-stats      | hard    | anomaly | Y    | TP  | 3.00 \nad-hard-06-near-normal-stats       | hard    | normal  | Y    | FP  | 2.92 \nad-hard-07-seasonal-latency-spike  | hard    | anomaly | Y    | TP  | 4.31 \nad-hard-08-seasonal-latency-normal | hard    | normal  | N    | TN  | 0.78 \nad-hard-09-mv-joint-outlier        | hard    | anomaly | Y    | TP  | 3.16 \nad-hard-10-mv-traffic-only         | hard    | normal  | Y    | FP  | 3.14 \nad-hard-11-flapping-ends-normal    | hard    | normal  | N    | TN  | 0.52 \nad-hard-12-flapping-ends-anomaly   | hard    | anomaly | N    | FN  | 2.10 \nad-hard-13-short-anomaly           | hard    | anomaly | N    | FN  | 0.06 \nad-hard-14-short-normal            | hard    | normal  | N    | TN  | 0.00 \nad-hard-15-latency-cliff           | hard    | anomaly | Y    | TP  | 3.00 \nad-hard-16-rps-variance-normal     | hard    | normal  | N    | TN  | 0.36 "
+  "table": "scenario_id                        | split   | label   | pred | out | score \n-----------------------------------+---------+---------+------+-----+-------\nad-01-error-rate-spike             | core    | anomaly | Y    | TP  | 99.31 \nad-02-latency-spike                | core    | anomaly | Y    | TP  | 145.01\nad-03-gradual-error-rise           | core    | anomaly | Y    | TP  | 3.16  \nad-04-normal-flat                  | core    | normal  | N    | TN  | 1.22  \nad-05-normal-noise                 | core    | normal  | N    | TN  | 0.52  \nad-06-latency-normal               | core    | normal  | N    | TN  | 0.28  \nad-07-request-drop                 | core    | anomaly | Y    | TP  | 20.98 \nad-08-borderline-error             | core    | normal  | N    | TN  | 2.11  \nad-09-seasonal-with-spike          | holdout | anomaly | Y    | TP  | 27.91 \nad-10-seasonal-normal              | holdout | normal  | N    | TN  | 1.27  \nad-11-multivariate-joint-outlier   | holdout | anomaly | Y    | TP  | 137.29\nad-12-multivariate-normal          | holdout | normal  | N    | TN  | 2.34  \nad-13-cold-start-spike             | holdout | anomaly | Y    | TP  | 3.67  \nad-14-flapping-ends-high           | holdout | anomaly | Y    | TP  | 2.33  \nad-15-near-threshold-anomaly       | holdout | anomaly | Y    | TP  | 2.26  \nad-16-near-threshold-normal        | holdout | normal  | N    | TN  | 2.22  \nad-17-recovery-last-normal         | holdout | normal  | N    | TN  | 0.66  \nad-18-gradual-latency              | holdout | anomaly | Y    | TP  | 2.37  \nad-19-oscillating-noise            | holdout | normal  | N    | TN  | 0.33  \nad-20-double-spike                 | holdout | anomaly | Y    | TP  | 3.00  \nad-21-seasonal-long-spike          | holdout | anomaly | Y    | TP  | 43.07 \nad-22-seasonal-long-normal         | holdout | normal  | N    | TN  | 0.85  \nad-23-multivariate-error-latency   | holdout | anomaly | Y    | TP  | 28.00 \nad-24-rps-only-cliff               | holdout | anomaly | Y    | TP  | 28.93 \nad-25-latency-borderline-normal    | holdout | normal  | N    | TN  | 1.33  \nad-26-latency-borderline-anomaly   | holdout | anomaly | Y    | TP  | 1.98  \nad-27-cold-start-normal            | holdout | normal  | N    | TN  | 0.10  \nad-28-double-latency-spike         | holdout | anomaly | Y    | TP  | 1.88  \nad-hard-01-noisy-spike             | hard    | anomaly | Y    | TP  | 9.50  \nad-hard-02-noisy-normal            | hard    | normal  | N    | TN  | 0.67  \nad-hard-03-slow-drift-anomaly      | hard    | anomaly | Y    | TP  | 3.61  \nad-hard-04-slow-drift-normal       | hard    | normal  | N    | TN  | 1.96  \nad-hard-05-near-anomaly-stats      | hard    | anomaly | Y    | TP  | 97.16 \nad-hard-06-near-normal-stats       | hard    | normal  | Y    | FP  | 13.86 \nad-hard-07-seasonal-latency-spike  | hard    | anomaly | Y    | TP  | 29.99 \nad-hard-08-seasonal-latency-normal | hard    | normal  | N    | TN  | 0.81  \nad-hard-09-mv-joint-outlier        | hard    | anomaly | Y    | TP  | 381.83\nad-hard-10-mv-traffic-only         | hard    | normal  | Y    | FP  | 30.19 \nad-hard-11-flapping-ends-normal    | hard    | normal  | N    | TN  | 0.56  \nad-hard-12-flapping-ends-anomaly   | hard    | anomaly | Y    | TP  | 5.69  \nad-hard-13-short-anomaly           | hard    | anomaly | Y    | TP  | 3.33  \nad-hard-14-short-normal            | hard    | normal  | N    | TN  | 0.13  \nad-hard-15-latency-cliff           | hard    | anomaly | Y    | TP  | 310.84\nad-hard-16-rps-variance-normal     | hard    | normal  | N    | TN  | 0.38  "
 }

@@ -42,7 +42,7 @@ Also report: `wrong_hop_rate`, grade histogram (`exact/partial/wrong_hop/…`).
 | `rca_scenarios.yaml` | RCA core + holdout |
 | `rca_scenarios_hard.yaml` | RCA OOD / hard |
 | `anomaly_scenarios.yaml` | Anomaly core + holdout |
-| `anomaly_scenarios_hard.yaml` | Anomaly hard (stats-only) |
+| `anomaly_scenarios_hard.yaml` | Anomaly hard/noisy (production scoring path) |
 | `dataset_io.py` | Multi-file / split loader |
 | `scoring.py` | Dual-mode RCA scoring, grades, P/R/F1 |
 | `evaluate_rca.py` | Offline / online RCA; default + strict |

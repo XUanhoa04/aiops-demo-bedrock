@@ -56,11 +56,13 @@ OOD ground truth (“unknown fault class / out of catalog”) is correct **only*
 | File | Split | Role |
 |------|-------|------|
 | `evaluation/anomaly_scenarios.yaml` | core / holdout | Clean synthetic (L0) |
-| `evaluation/anomaly_scenarios_hard.yaml` | hard | Stats-only, noise, multivariate conflict (L1) |
+| `evaluation/anomaly_scenarios_hard.yaml` | hard | Noise, drift, multivariate conflict (L1) |
 | `evaluation/rca_scenarios.yaml` | core / holdout | Catalog regression (L0) |
 | `evaluation/rca_scenarios_hard.yaml` | hard | OOD / ambiguous / metric-only (L1) |
 
-Hard anomaly scenarios set `absolute_threshold` extremely high so the **manual** threshold path cannot carry the label — only EWMA/z-score/STL/IF.
+All anomaly scenarios call the production `evaluate_service` path. Scenario
+`absolute_threshold` fields are legacy provenance and deliberately ignored;
+there is no final-sample `force_score` or label-aware threshold override.
 
 ## Baselines
 
@@ -91,8 +93,8 @@ CI requires **beating weak**. Beating strong is reported and desirable, not alwa
 | Layer | Metric | Sample value | Interpretation |
 |-------|--------|--------------|----------------|
 | Anomaly **L0** (n≈28) | F1 / P / R | **0.97 / 0.94 / 1.00** | Clean synthetic — catalog-friendly |
-| Anomaly **hard** (n≈16) | F1 / P / R | **0.67 / 0.71 / 0.63** | Stats-only + noise — CV-honest |
-| Anomaly overall (n≈44) | F1 | **0.88** | Mix of L0 + hard |
+| Anomaly **hard** (n≈16) | F1 / P / R | **0.89 / 0.80 / 1.00** | Noisy synthetic — CV-honest |
+| Anomaly overall (n≈44) | F1 | **0.96** | Production scoring path; no benchmark-only force |
 | RCA **core/holdout** (n≈42) | Acc (default) | **1.00** | Pattern-catalog regression |
 | RCA **hard OOD** (n≈10) | Acc default / strict | **0.60 / 0.50** | Unknown faults must not invent pool |
 | RCA overall (n≈52) | Acc default / strict | **0.92 / 0.90** | Includes hard; mean Jaccard ≈ **0.66** |
@@ -112,7 +114,7 @@ Live e2e depends on stack timing/Loki fill — report accuracy **and** evidence 
 
 **Safe CV wording (with sample numbers)**
 
-> Built explainable AIOps closed loop (detect → decide → topology RCA → gated remediate). Offline: anomaly hard F1 ~0.67, RCA hard ~0.60 / strict overall ~0.90, wrong-hop 0%; beats SRE baselines (~0.81). L0 catalog can score higher by design — not claimed as prod ML.
+> Built an explainable AIOps control loop (detect → decide → topology RCA → gated remediate). Offline: anomaly hard F1 ~0.89, RCA hard ~0.60 / strict overall ~0.90, wrong-hop 0%; beats SRE baselines (~0.81). L0 catalog can score higher by design — not claimed as prod ML.
 
 ## Artifacts
 

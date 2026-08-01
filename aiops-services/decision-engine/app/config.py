@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     incident_manager_url: str = "http://aiops-incident-manager:8002"
     rca_engine_url: str = "http://aiops-rca-engine:8003"
     remediation_url: str = "http://aiops-remediation:8004"
+    remediation_api_key: str = ""
 
     # --- Decision thresholds (0–100 confidence from Confidence Scorer) ---
     # Env: CONFIDENCE_HIGH / CONFIDENCE_MEDIUM
@@ -72,9 +73,18 @@ class Settings(BaseSettings):
     # Dedicated queue so we do not race Incident Manager on aiops:anomalies.
     # Detector can dual-publish later; for now POST /decide + optional fan-out.
     redis_queue_decisions: str = "aiops:decisions"
-    enable_redis_consumer: bool = True
+    enable_redis_consumer: bool = False
+    queue_max_retries: int = 3
     # Also listen to anomaly queue copy if set (empty = disabled)
     redis_queue_anomalies_mirror: str = ""
+
+    @property
+    def redis_queue_decisions_processing(self) -> str:
+        return f"{self.redis_queue_decisions}:processing"
+
+    @property
+    def redis_queue_decisions_dlq(self) -> str:
+        return f"{self.redis_queue_decisions}:dlq"
 
     # Persist decision trail onto incident.context via PATCH
     patch_incident_context: bool = True

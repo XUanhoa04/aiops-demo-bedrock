@@ -605,8 +605,95 @@ class EvidenceGatherer:
                     }
                 )
                 if len(collected) >= limit:
-                    return collected
-        return collected
+                    return self._enrich_trace_details(collected)
+        return self._enrich_trace_details(collected)
+
+    def _enrich_trace_details(
+        self, traces: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Fetch bounded OTLP span trees for evidence, not only search metadata."""
+        for trace in traces[: max(0, settings.max_trace_details)]:
+            trace_id = str(trace.get("trace_id") or "")
+            if not trace_id:
+                continue
+            try:
+                response = self._http.get(f"{self.tempo_url}/api/traces/{trace_id}")
+                response.raise_for_status()
+                trace.update(_summarize_otlp_trace(response.json()))
+            except Exception as exc:
+                trace["detail_error"] = str(exc)[:300]
+                logger.debug("tempo trace detail failed trace=%s err=%s", trace_id, exc)
+        return traces
+
+
+def _otlp_attributes(items: list[dict[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for item in items or []:
+        key = item.get("key")
+        value = item.get("value") or {}
+        if not key:
+            continue
+        for value_key in (
+            "stringValue",
+            "intValue",
+            "doubleValue",
+            "boolValue",
+        ):
+            if value_key in value:
+                out[str(key)] = value[value_key]
+                break
+    return out
+
+
+def _summarize_otlp_trace(payload: dict[str, Any]) -> dict[str, Any]:
+    """Convert Tempo's OTLP JSON into compact span and service-edge evidence."""
+    spans: list[dict[str, Any]] = []
+    for resource_spans in payload.get("resourceSpans") or []:
+        resource = resource_spans.get("resource") or {}
+        resource_attrs = _otlp_attributes(resource.get("attributes") or [])
+        service = str(resource_attrs.get("service.name") or "unknown")
+        groups = (
+            resource_spans.get("scopeSpans")
+            or resource_spans.get("instrumentationLibrarySpans")
+            or []
+        )
+        for group in groups:
+            for span in group.get("spans") or []:
+                start = int(span.get("startTimeUnixNano") or 0)
+                end = int(span.get("endTimeUnixNano") or 0)
+                status = (span.get("status") or {}).get("code")
+                spans.append(
+                    {
+                        "span_id": str(span.get("spanId") or ""),
+                        "parent_span_id": str(span.get("parentSpanId") or ""),
+                        "service": service,
+                        "name": str(span.get("name") or ""),
+                        "duration_ms": round(max(0, end - start) / 1_000_000, 3),
+                        "error": status in (2, "2", "STATUS_CODE_ERROR"),
+                    }
+                )
+
+    by_id = {span["span_id"]: span for span in spans if span["span_id"]}
+    edges: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for span in spans:
+        parent = by_id.get(span["parent_span_id"])
+        if not parent or parent["service"] == span["service"]:
+            continue
+        key = (str(parent["service"]), str(span["service"]))
+        if key not in seen:
+            seen.add(key)
+            edges.append({"from": key[0], "to": key[1], "via": "tempo_span_parent"})
+
+    error_spans = [span for span in spans if span["error"]]
+    critical = max(spans, key=lambda span: span["duration_ms"], default=None)
+    return {
+        "services": sorted({str(span["service"]) for span in spans}),
+        "edges": edges,
+        "error_spans": error_spans[:10],
+        "critical_span": critical,
+        "span_count": len(spans),
+    }
 
 
 def _extract_trace_id(line: str, labels: Optional[dict] = None) -> Optional[str]:

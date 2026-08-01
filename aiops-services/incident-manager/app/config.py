@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     redis_queue_anomalies: str = "aiops:anomalies"
     redis_queue_incidents: str = "aiops:incidents"
+    queue_max_retries: int = 3
 
     # Volume-mounted path in compose; file SQLite is demo-grade only.
     # Production: Postgres/Aurora + migrations (Alembic).
@@ -47,7 +48,15 @@ class Settings(BaseSettings):
 
     # Enqueue incident JSON on Redis (optional async consumers).
     # RCA redis poll should stay OFF by default so this is not a dual path.
-    enable_redis_incident_fanout: bool = True
+    enable_redis_incident_fanout: bool = False
+
+    @property
+    def redis_queue_anomalies_processing(self) -> str:
+        return f"{self.redis_queue_anomalies}:processing"
+
+    @property
+    def redis_queue_anomalies_dlq(self) -> str:
+        return f"{self.redis_queue_anomalies}:dlq"
 
     # Browser-facing Grafana (for one-click Trace / Logs deep-links in the UI).
     # Must be localhost (or your host DNS), NOT the Docker-internal `lgtm` hostname.

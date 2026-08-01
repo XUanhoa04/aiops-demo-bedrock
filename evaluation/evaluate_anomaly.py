@@ -4,7 +4,7 @@ Evaluate Hybrid Anomaly Detector against labeled mini/suite dataset.
 
 Modes per scenario
 ------------------
-  univariate (default): stream `values` into HybridDetector.force_score
+  univariate (default): stream `values` through the production evaluate_service API
   multivariate: stream `features_series` via evaluate_service (IsolationForest)
 
 Metrics
@@ -48,7 +48,6 @@ def evaluate(scenarios: list[dict[str, Any]]) -> tuple[BinaryCounts, list[dict]]
         label = (sc.get("label") or "normal").lower()
         is_true_anomaly = label == "anomaly"
         mode = (sc.get("mode") or "univariate").lower()
-        thr = float(sc.get("absolute_threshold") or 0.15)
 
         pred_anomaly = False
         last_score = 0.0
@@ -81,9 +80,10 @@ def evaluate(scenarios: list[dict[str, Any]]) -> tuple[BinaryCounts, list[dict]]
             values = [float(v) for v in (sc.get("values") or [])]
             for i, v in enumerate(values):
                 if i < len(values) - 1:
-                    det._score_univariate(service, metric, v)
+                    det.evaluate_service(service, {metric: v})
                 else:
-                    result = det.force_score(service, metric, v, thr)
+                    scored = det.evaluate_service(service, {metric: v})
+                    result = next(r for r in scored if r.metric == metric)
                     pred_anomaly = bool(result.is_anomaly)
                     last_score = float(result.anomaly_score)
                     last_methods = list(result.winning_methods)
@@ -243,8 +243,8 @@ def main() -> int:
         "split_filter": args.split,
         "split_counts": splits,
         "honesty": (
-            "Core/holdout = clean synthetic (L0). Hard = stats-only / noisy "
-            "(absolute_threshold disabled via huge thr). Overall mixes both."
+            "All scenarios execute the production evaluate_service path. "
+            "Core/holdout are clean synthetic L0; hard is noisy synthetic."
         ),
         "aggregate": {
             "n": len(rows),

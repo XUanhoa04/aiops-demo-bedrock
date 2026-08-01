@@ -48,14 +48,14 @@ python scripts/dynamic_load.py --profile demo --stage-seconds 12
 ### Scene 5 — Gated remediation
 
 - Open http://localhost:8501
-- Show low-risk auto vs high-risk approval (optional API key).
+- Show propose-only default and explicit approval/execute (optional API key).
 - **Say:** “Auto-remediation without gates is how bots amplify outages. Restart/scale stay human-approved.”
 
 ### Scene 6 — Feedback, eval, honesty
 
 - Open http://localhost:8502 → thumbs; or Engine QA :8503.
 - Mention offline suite: `bash scripts/run-evaluation.sh` · `report_summary.py`.
-- **Say:** “We separate L0 catalog regression (can be ~1.0) from hard/OOD and strict scoring — e.g. anomaly hard F1 ~0.67, RCA hard ~0.60. Live path uses real chaos + OTel; offline ≠ prod ML.”
+- **Say:** “We separate L0 catalog regression (can be ~1.0) from hard/OOD and strict scoring — e.g. anomaly hard F1 ~0.89, RCA hard ~0.60. Live path uses real chaos + OTel; offline ≠ prod ML.”
 
 ## Why this impresses seniors
 

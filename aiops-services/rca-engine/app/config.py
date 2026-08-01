@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     evidence_window_minutes: int = 15
     max_log_lines: int = 40
     max_traces: int = 15
+    max_trace_details: int = 3
     # Neighbor expansion (topology-aware RCA)
     # Env: TOPOLOGY_PATH — path to config/service_topology.yaml
     topology_path: str = ""
@@ -39,6 +40,15 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     redis_queue_incidents: str = "aiops:incidents"
     enable_redis_poll: bool = False
+    queue_max_retries: int = 3
+
+    @property
+    def redis_queue_incidents_processing(self) -> str:
+        return f"{self.redis_queue_incidents}:processing"
+
+    @property
+    def redis_queue_incidents_dlq(self) -> str:
+        return f"{self.redis_queue_incidents}:dlq"
 
     # Amazon Bedrock
     aws_access_key_id: str = ""
@@ -67,6 +77,7 @@ class Settings(BaseSettings):
     remediation_url: str = "http://aiops-remediation:8004"
     enable_remediation_fanout: bool = True
     remediation_timeout_sec: float = 15.0
+    remediation_api_key: str = ""
 
     # Public Grafana URL as seen by the operator's browser (not the Docker DNS name).
     # Used to embed one-click Tempo deep-links on the incident ticket.

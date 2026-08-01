@@ -56,10 +56,20 @@ class BedrockRCAClient:
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.total_latency_ms = 0.0
+        self._credentials_available: Optional[bool] = None
 
     @property
     def configured(self) -> bool:
-        return bool(settings.aws_access_key_id and settings.aws_secret_access_key)
+        if settings.force_rule_based or not self.model_id:
+            return False
+        if self._credentials_available is None:
+            try:
+                session = boto3.Session(region_name=self.region)
+                self._credentials_available = session.get_credentials() is not None
+            except (BotoCoreError, ClientError) as exc:
+                logger.warning("AWS credential-chain lookup failed: %s", exc)
+                self._credentials_available = False
+        return self._credentials_available
 
     def _get_client(self):
         if self._client is not None:
@@ -84,7 +94,9 @@ class BedrockRCAClient:
     def analyze(self, pack: EvidencePack) -> tuple[RCAResult, LLMUsage]:
         """Call Bedrock Converse; return (RCAResult, LLMUsage)."""
         if not self.configured:
-            raise BedrockError("AWS credentials missing (AWS_ACCESS_KEY_ID / SECRET)")
+            raise BedrockError(
+                "AWS credentials unavailable from the boto3 credential provider chain"
+            )
 
         try:
             raw_text, usage = self._converse_with_retry(pack)

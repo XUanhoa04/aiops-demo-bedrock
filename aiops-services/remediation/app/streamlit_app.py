@@ -239,13 +239,13 @@ with right:
                             st.rerun()
                         except Exception as exc:
                             st.error(str(exc))
-                if status == "proposed":
-                    if col_b.button("Execute (force)", key=f"ex_{h['id']}"):
+                if status == "proposed" and risk == "low":
+                    if col_b.button("Execute low-risk", key=f"ex_{h['id']}"):
                         try:
                             api(
                                 "POST",
                                 f"/actions/{h['id']}/execute",
-                                json={"executed_by": operator, "force": True},
+                                json={"executed_by": operator},
                             )
                             st.cache_data.clear()
                             st.rerun()

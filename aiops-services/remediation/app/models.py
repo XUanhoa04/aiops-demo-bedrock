@@ -67,10 +67,6 @@ class ProposeRequest(BaseModel):
 
 class ExecuteRequest(BaseModel):
     executed_by: str = "operator"
-    force: bool = Field(
-        default=False,
-        description="Allow execute without prior approval (ops override)",
-    )
 
 
 class ApproveRequest(BaseModel):

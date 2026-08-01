@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     remediation_db_path: str = "/data/remediation.db"
 
     # When true, low-risk proposed actions are executed immediately
-    auto_execute_low_risk: bool = True
+    auto_execute_low_risk: bool = False
 
     # Dry-run: never touch docker/chaos; only log simulated results
     simulate_only: bool = False
@@ -40,11 +40,16 @@ class Settings(BaseSettings):
     # Default actor identity recorded in history
     default_executor: str = "remediation-bot"
 
-    # Operator auth for high-impact mutations (approve / execute / reject / FP).
+    # Operator auth for mutation endpoints (propose / approve / execute / reject / FP).
     # Empty = open localhost demo (logged on /health as auth_required=false).
     # Set REMEDIATION_API_KEY in .env for a production-like gate; Streamlit and
     # curl must send header X-API-Key: <value>.
     remediation_api_key: str = ""
+    cors_allowed_origins: str = "http://localhost:8501,http://127.0.0.1:8501"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [x.strip() for x in self.cors_allowed_origins.split(",") if x.strip()]
 
 
 settings = Settings()

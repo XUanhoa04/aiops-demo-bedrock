@@ -190,6 +190,8 @@ class HybridDetector:
         self,
         service: str,
         features: dict[str, Optional[float]],
+        *,
+        include_absolute_thresholds: bool = True,
     ) -> list[HybridResult]:
         """
         Score each available univariate metric + one multivariate IsolationForest.
@@ -211,7 +213,7 @@ class HybridDetector:
                 results.append(mv)
 
         # --- Absolute threshold safety net on error_rate / latency ---
-        if "http_error_rate" in clean:
+        if include_absolute_thresholds and "http_error_rate" in clean:
             thr = settings.error_rate_threshold
             val = clean["http_error_rate"]
             is_anom = val >= thr
@@ -241,7 +243,7 @@ class HybridDetector:
             if "http_latency_p99_seconds" in clean
             else "http_latency_p95_seconds"
         )
-        if latency_key in clean:
+        if include_absolute_thresholds and latency_key in clean:
             thr = settings.latency_p95_seconds_threshold
             val = clean[latency_key]
             is_anom = val >= thr
@@ -282,12 +284,13 @@ class HybridDetector:
     ) -> HybridResult:
         key = f"{service}:{metric}"
         state = self._series[key]
-        state.update(value)
 
         methods: list[MethodResult] = []
         friendly = _friendly_metric_name(metric)
 
-        # Rolling baseline (explainable: mean/std of last N samples)
+        # Score against the historical baseline before learning the current
+        # observation. Updating first leaks the answer into mean/variance and
+        # systematically suppresses spikes.
         arr = np.asarray(list(state.values), dtype=float) if state.values else None
         roll_mu = float(arr.mean()) if arr is not None and len(arr) else None
         roll_sigma = float(arr.std(ddof=0)) if arr is not None and len(arr) else None
@@ -355,6 +358,8 @@ class HybridDetector:
         if stl_result is not None:
             methods.append(stl_result)
 
+        state.update(value)
+
         result = HybridResult(
             service=service,
             metric=metric,
@@ -391,13 +396,15 @@ class HybridDetector:
         if not settings.enable_stl or not _HAS_STL or STL is None:
             return None
         period = max(2, int(settings.stl_period))
-        n = len(state.values)
+        history_n = len(state.values)
+        n = history_n + 1
         # statsmodels STL needs n >= 2 * period
         if n < max(settings.min_samples, 2 * period):
             return None
 
-        arr = np.asarray(list(state.values), dtype=float)
-        total_var = float(np.var(arr))
+        history = np.asarray(list(state.values), dtype=float)
+        arr = np.append(history, value)
+        total_var = float(np.var(history))
         if total_var < 1e-18:
             return None
 
@@ -423,7 +430,8 @@ class HybridDetector:
             )
             return None
 
-        resid_std = float(np.std(residual, ddof=0))
+        # Normalize the candidate residual against historical residuals only.
+        resid_std = float(np.std(residual[:-1], ddof=0))
         last_resid = float(residual[-1])
         if resid_std < 1e-12:
             z = 0.0 if abs(last_resid) < 1e-12 else 10.0
@@ -458,20 +466,24 @@ class HybridDetector:
         service: str,
         features: dict[str, float],
     ) -> Optional[HybridResult]:
-        # Stable feature order
-        keys = [
-            "http_request_rate",
-            "http_error_rate",
-            "http_latency_p95_seconds",
-            "http_latency_p99_seconds",
-        ]
-        present = [k for k in keys if k in features]
-        if len(present) < 2:
+        # Fixed dimensionality across polls. p99 is an explicit fallback for
+        # the latency slot; it is never appended as a fourth dynamic feature.
+        latency_key = (
+            "http_latency_p95_seconds"
+            if "http_latency_p95_seconds" in features
+            else "http_latency_p99_seconds"
+        )
+        required = ["http_request_rate", "http_error_rate", latency_key]
+        if any(k not in features for k in required):
             return None
-        vec = [features[k] for k in present]
+        feature_names = ["http_request_rate", "http_error_rate", "http_latency_seconds"]
+        vec = [
+            features["http_request_rate"],
+            features["http_error_rate"],
+            features[latency_key],
+        ]
 
         hist = self._feature_hist[service]
-        hist.append(vec)
 
         method: Optional[MethodResult] = None
         if len(hist) >= settings.min_samples:
@@ -490,7 +502,9 @@ class HybridDetector:
                 raw = float(model.decision_function([vec])[0])
                 pred = int(model.predict([vec])[0])  # -1 anomaly, 1 normal
                 score = max(0.0, -raw * 5.0)  # scale for Grafana readability
-                feat_summary = ", ".join(f"{k}={features[k]:.4g}" for k in present)
+                feat_summary = ", ".join(
+                    f"{k}={v:.4g}" for k, v in zip(feature_names, vec)
+                )
                 method = MethodResult(
                     method="isolation_forest",
                     score=score,
@@ -498,7 +512,7 @@ class HybridDetector:
                     detail={
                         "decision_function": raw,
                         "n_samples": len(hist),
-                        "features": present,
+                        "features": feature_names,
                         "contamination": settings.iforest_contamination,
                         "explanation": (
                             f"IsolationForest flagged multivariate outlier on "
@@ -512,14 +526,18 @@ class HybridDetector:
                 logger.warning("isolation_forest failed service=%s err=%s", service, exc)
                 method = None
 
+        # Learn only after scoring so the candidate cannot influence its own
+        # IsolationForest boundary.
+        hist.append(vec)
+
         if method is None:
             return None
 
-        primary = "http_error_rate" if "http_error_rate" in features else present[0]
+        primary = "http_error_rate"
         result = HybridResult(
             service=service,
             metric=f"multivariate:{primary}",
-            value=features.get(primary, vec[0]),
+            value=features[primary],
             is_anomaly=method.is_anomaly,
             anomaly_score=method.score,
             methods=[method],
@@ -555,26 +573,21 @@ class HybridDetector:
         value: float,
         threshold: float,
     ) -> HybridResult:
-        """Manual / API path — still updates series state for realism."""
+        """Explicit API threshold path; statistical scoring remains unchanged."""
         uni = self._score_univariate(service, metric, value)
         thr = MethodResult(
-            method="manual",
+            method="api_threshold",
             score=value / threshold if threshold else value,
             is_anomaly=value >= threshold,
             detail={
                 "threshold": threshold,
                 "source": "api",
                 "explanation": (
-                    f"Manual inject: {_friendly_metric_name(metric)}={value:.4g} "
+                    f"API observation: {_friendly_metric_name(metric)}={value:.4g} "
                     f"≥ threshold {threshold}"
                 ),
             },
         )
         uni.methods.append(thr)
         self._recompute_vote(uni)
-        # Manual always forces anomaly if above threshold for demo reliability
-        if value >= threshold:
-            uni.is_anomaly = True
-            if "manual" not in uni.winning_methods:
-                uni.winning_methods.append("manual")
         return uni

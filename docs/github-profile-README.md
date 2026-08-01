@@ -72,7 +72,7 @@ I care about systems that **fail safely** and **explain themselves** to on-call 
   | Explainability | EWMA / σ narratives, not black-box scores alone |
   | Grounded GenAI | RCA only reasons over Prom / Loki / Tempo + topology |
   | Topology | checkout→inventory\|payment→fraud (real multi-hop traces) |
-  | Measurable quality | Hard anomaly F1 ~0.67 · RCA hard ~0.60 / strict ~0.90 · beats SRE baselines in CI |
+  | Measurable quality | Hard anomaly F1 ~0.89 · RCA hard ~0.60 / strict ~0.90 · beats SRE baselines in CI |
 
 </details>
 

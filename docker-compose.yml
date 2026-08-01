@@ -260,10 +260,12 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       REDIS_QUEUE_ANOMALIES: ${REDIS_QUEUE_ANOMALIES:-aiops:anomalies}
       REDIS_QUEUE_DECISIONS: ${REDIS_QUEUE_DECISIONS:-aiops:decisions}
-      ENABLE_DECISION_QUEUE: ${ENABLE_DECISION_QUEUE:-true}
+      # Canonical path: detector Redis -> Incident Manager -> Decision HTTP.
+      # Secondary paths are opt-in to prevent duplicate incidents/decisions.
+      ENABLE_DECISION_QUEUE: ${ENABLE_DECISION_QUEUE:-false}
       INCIDENT_WEBHOOK_URL: ${INCIDENT_WEBHOOK_URL:-http://aiops-incident-manager:8002/incidents/from-anomaly}
       ENABLE_REDIS_NOTIFY: ${ENABLE_REDIS_NOTIFY:-true}
-      ENABLE_WEBHOOK_NOTIFY: ${ENABLE_WEBHOOK_NOTIFY:-true}
+      ENABLE_WEBHOOK_NOTIFY: ${ENABLE_WEBHOOK_NOTIFY:-false}
       ALERT_COOLDOWN_SEC: ${ALERT_COOLDOWN_SEC:-60}
     ports:
       - "8001:8001"
@@ -299,6 +301,8 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       REDIS_QUEUE_ANOMALIES: ${REDIS_QUEUE_ANOMALIES:-aiops:anomalies}
       REDIS_QUEUE_INCIDENTS: ${REDIS_QUEUE_INCIDENTS:-aiops:incidents}
+      QUEUE_MAX_RETRIES: ${QUEUE_MAX_RETRIES:-3}
+      ENABLE_REDIS_INCIDENT_FANOUT: ${ENABLE_REDIS_INCIDENT_FANOUT:-false}
       INCIDENT_DB_PATH: ${INCIDENT_DB_PATH:-/data/incidents.db}
       # Single control plane: Decision Engine owns RCA/remediate/escalate.
       # Direct IM→RCA HTTP fan-out OFF by default (ENABLE_DIRECT_RCA_FANOUT=true for legacy).
@@ -367,14 +371,17 @@ services:
       INCIDENT_MANAGER_URL: ${INCIDENT_MANAGER_URL:-http://aiops-incident-manager:8002}
       REMEDIATION_URL: ${REMEDIATION_URL:-http://aiops-remediation:8004}
       ENABLE_REMEDIATION_FANOUT: ${ENABLE_REMEDIATION_FANOUT:-true}
+      REMEDIATION_API_KEY: ${REMEDIATION_API_KEY:-}
       PROMETHEUS_URL: ${PROMETHEUS_URL:-http://lgtm:9090}
       LOKI_URL: ${LOKI_URL:-http://lgtm:3100}
       TEMPO_URL: ${TEMPO_URL:-http://lgtm:3200}
       EVIDENCE_WINDOW_MINUTES: ${EVIDENCE_WINDOW_MINUTES:-15}
+      MAX_TRACE_DETAILS: ${MAX_TRACE_DETAILS:-3}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       REDIS_QUEUE_INCIDENTS: ${REDIS_QUEUE_INCIDENTS:-aiops:incidents}
       # Default false: avoid dual path (IM Redis fan-out + Decision Engine both calling RCA)
       ENABLE_REDIS_POLL: ${ENABLE_REDIS_POLL:-false}
+      QUEUE_MAX_RETRIES: ${QUEUE_MAX_RETRIES:-3}
       GRAFANA_PUBLIC_URL: ${GRAFANA_PUBLIC_URL:-http://localhost:3000}
       TEMPO_DATASOURCE_UID: ${TEMPO_DATASOURCE_UID:-tempo}
       LOKI_DATASOURCE_UID: ${LOKI_DATASOURCE_UID:-loki}
@@ -421,12 +428,13 @@ services:
       INCIDENT_MANAGER_URL: ${INCIDENT_MANAGER_URL:-http://aiops-incident-manager:8002}
       RCA_ENGINE_URL: ${RCA_ENGINE_URL:-http://aiops-rca-engine:8003}
       REMEDIATION_DB_PATH: ${REMEDIATION_DB_PATH:-/data/remediation.db}
-      AUTO_EXECUTE_LOW_RISK: ${AUTO_EXECUTE_LOW_RISK:-true}
+      AUTO_EXECUTE_LOW_RISK: ${AUTO_EXECUTE_LOW_RISK:-false}
       SIMULATE_ONLY: ${SIMULATE_ONLY:-false}
       DOCKER_HOST: ${DOCKER_HOST:-}
       DEFAULT_EXECUTOR: ${DEFAULT_EXECUTOR:-remediation-bot}
       # Empty = open localhost demo; set for production-like operator auth (X-API-Key)
       REMEDIATION_API_KEY: ${REMEDIATION_API_KEY:-}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}
     ports:
       - "8004:8004"
       - "8501:8501"
@@ -468,6 +476,7 @@ services:
       INCIDENT_MANAGER_URL: ${INCIDENT_MANAGER_URL:-http://aiops-incident-manager:8002}
       RCA_ENGINE_URL: ${RCA_ENGINE_URL:-http://aiops-rca-engine:8003}
       REMEDIATION_URL: ${REMEDIATION_URL:-http://aiops-remediation:8004}
+      REMEDIATION_API_KEY: ${REMEDIATION_API_KEY:-}
       CONFIDENCE_HIGH: ${CONFIDENCE_HIGH:-85}
       CONFIDENCE_MEDIUM: ${CONFIDENCE_MEDIUM:-60}
       MAX_ITERATIONS: ${MAX_ITERATIONS:-3}
@@ -479,7 +488,8 @@ services:
       MIN_LLM_CONFIDENCE: ${MIN_LLM_CONFIDENCE:-40}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       REDIS_QUEUE_DECISIONS: ${REDIS_QUEUE_DECISIONS:-aiops:decisions}
-      ENABLE_REDIS_CONSUMER: ${DECISION_ENABLE_REDIS_CONSUMER:-true}
+      ENABLE_REDIS_CONSUMER: ${DECISION_ENABLE_REDIS_CONSUMER:-false}
+      QUEUE_MAX_RETRIES: ${QUEUE_MAX_RETRIES:-3}
     ports:
       - "8006:8006"
     depends_on:

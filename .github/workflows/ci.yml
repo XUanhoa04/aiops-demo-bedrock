@@ -63,6 +63,7 @@ jobs:
           export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/remediation"
           pytest -q aiops-services/remediation/tests
           export PYTHONPATH="$ROOT/shared"
+          pytest -q shared/tests
           pytest -q apps/tests
           pytest -q evaluation/test_scoring.py
 

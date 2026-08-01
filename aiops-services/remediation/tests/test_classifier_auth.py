@@ -77,3 +77,16 @@ def test_approve_requires_api_key():
         headers={"X-API-Key": "test-secret-key"},
     )
     assert r.status_code == 404
+
+
+def test_propose_requires_api_key():
+    from fastapi.testclient import TestClient
+
+    from app import main as main_mod
+
+    client = TestClient(main_mod.app)
+    r = client.post(
+        "/remediate/propose",
+        json={"incident_id": "i-1", "actions": ["Investigate logs"]},
+    )
+    assert r.status_code == 401

@@ -78,7 +78,12 @@ class ServiceClients:
             "persist": persist,
         }
         try:
-            r = self._http.post(url, json=payload)
+            headers = (
+                {"X-API-Key": settings.remediation_api_key}
+                if settings.remediation_api_key
+                else None
+            )
+            r = self._http.post(url, json=payload, headers=headers)
             if r.status_code >= 400:
                 logger.error("RCA HTTP %s: %s", r.status_code, r.text[:300])
                 return None

@@ -252,14 +252,22 @@ def infer_edges_from_traces(
     edges: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for tr in traces or []:
+        for edge in tr.get("edges") or []:
+            a = str(edge.get("from") or "")
+            b = str(edge.get("to") or "")
+            if a and b and a != b and (a, b) not in seen:
+                seen.add((a, b))
+                edges.append(
+                    {"from": a, "to": b, "via": str(edge.get("via") or "tempo_span")}
+                )
         root = str(tr.get("root_service") or "")
         name = str(tr.get("root_name") or tr.get("search_mode") or "")
         if root and root != service:
-            key = (service, root)
+            key = (root, service)
             if key not in seen:
                 seen.add(key)
                 # If another service is root of a trace related to us, treat as peer edge
-                edges.append({"from": service, "to": root, "via": "tempo_root"})
+                edges.append({"from": root, "to": service, "via": "tempo_root"})
         # Pattern strings sometimes contain "checkout → payment"
         if "→" in name or "->" in name:
             parts = name.replace("->", "→").split("→")

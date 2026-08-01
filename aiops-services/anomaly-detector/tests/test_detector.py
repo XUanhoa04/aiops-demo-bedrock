@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "shared"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.detector import HybridDetector
+from app.config import settings
 
 
 def test_ewma_flags_level_shift():
@@ -44,12 +45,25 @@ def test_ewma_flags_level_shift():
             assert m.explanation
 
 
-def test_manual_force_score():
+def test_explicit_api_threshold_score():
     det = HybridDetector()
     r = det.force_score("payment-service", "http_error_rate", 0.5, 0.15)
     assert r.is_anomaly
-    assert "manual" in r.winning_methods
-    assert "threshold" in r.explanation.lower() or "Manual" in r.explanation or "0.5" in r.explanation
+    assert "api_threshold" in r.winning_methods
+    assert "threshold" in r.explanation.lower() or "0.5" in r.explanation
+
+
+def test_current_sample_is_not_leaked_into_rolling_baseline():
+    det = HybridDetector()
+    for _ in range(settings.min_samples):
+        det._score_univariate("checkout-service", "http_request_rate", 10.0)
+
+    result = det._score_univariate(
+        "checkout-service", "http_request_rate", 100.0
+    )
+    zscore = next(m for m in result.methods if m.method == "zscore")
+    assert zscore.is_anomaly
+    assert zscore.detail["baseline_mean"] == 10.0
 
 
 def test_isolation_forest_warms_up():

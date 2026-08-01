@@ -4,10 +4,10 @@ AIOps Remediation API — risk-gated actions with approval workflow.
 Production notes
 ----------------
 * Low-risk auto: reversible demo ops (chaos reset, log-only).
-* High-risk: restart/scale require Approve & Execute (or force override).
+* High-risk: restart/scale require an explicit Approve transition.
 * Action history is append-mostly SQLite for audit (who did what, when).
 * Streamlit UI on :8501 talks to this API on :8004.
-* When REMEDIATION_API_KEY is set, approve/execute/reject/FP require X-API-Key.
+* When REMEDIATION_API_KEY is set, every mutation requires X-API-Key.
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ app = FastAPI(
         "Propose remediation from RCA suggested_actions, gate high-risk "
         "behind approval, execute/simulate restart & scale, store audit history."
     ),
-    version="0.3.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
 setup_otel(settings.service_name, app=app)
@@ -94,7 +94,7 @@ setup_otel(settings.service_name, app=app)
 # Streamlit (browser) → API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -107,7 +107,7 @@ def health() -> HealthResponse:
     return HealthResponse(
         status="ok" if im_ok else "degraded",
         service=settings.service_name,
-        version="0.3.0",
+        version="0.4.0",
         details={
             "incident_manager_ok": im_ok,
             "db_path": settings.remediation_db_path,
@@ -158,7 +158,10 @@ def get_incident_bundle(incident_id: str) -> IncidentBundle:
 
 
 @app.post("/remediate/propose", response_model=list[ActionRecord])
-def propose(body: ProposeRequest) -> list[ActionRecord]:
+def propose(
+    body: ProposeRequest,
+    _: None = Depends(require_operator_auth),
+) -> list[ActionRecord]:
     """
     Build action records from RCA suggested_actions (or explicit list).
 
@@ -221,7 +224,7 @@ def execute_action(
         return svc.execute(
             action_id,
             executed_by=body.executed_by,
-            force=body.force,
+            force=False,
         )
     except LookupError:
         raise HTTPException(status_code=404, detail="action not found")
@@ -269,7 +272,7 @@ def remediate_legacy(
     executed_by: str = "legacy-api",
     _: None = Depends(require_operator_auth),
 ) -> ActionRecord:
-    """Backward-compatible one-shot remediate (low-risk chaos reset)."""
+    """Backward-compatible proposal endpoint; execution still requires approval."""
     texts = {
         "reset_error_rate": f"Reset error_rate chaos on {target_service}",
         "reset_latency": f"Reset latency chaos on {target_service}",
@@ -280,13 +283,11 @@ def remediate_legacy(
     created = svc.propose_for_incident(
         incident_id,
         [text],
-        auto_execute_low_risk=True,
+        auto_execute_low_risk=False,
     )
     if not created:
         raise HTTPException(status_code=400, detail="no action created")
     rec = created[0]
-    if rec.risk_level.value == "high" and rec.status.value == "proposed":
-        rec = svc.approve(rec.id, executed_by=executed_by, execute_now=True)
     return rec
 
 

@@ -75,7 +75,7 @@ RCA Redis poll defaults **off**.
 
 **Default:** 4 running apps + static catalog (+ Tempo-inferred edges).
 
-At gather time RCA expands **upstream/downstream** neighbors into `EvidencePack` and prefers a sicker dependency as `root_cause` when margins match (wrong-hop avoidance).
+At gather time RCA expands **upstream/downstream** neighbors into `EvidencePack`, fetches a bounded number of full OTLP span trees from Tempo, and derives caller→callee edges plus error/critical spans. Search-hit metadata alone is not treated as causal proof.
 
 **Rule patterns** are data-driven: `config/rca_patterns.yaml` via `aiops_shared.rca_patterns` — extend synonyms in YAML, not `if scenario_id` in Python.
 
@@ -95,14 +95,14 @@ At gather time RCA expands **upstream/downstream** neighbors into `EvidencePack`
 
 | Area | Demo choice | Production direction |
 |------|-------------|----------------------|
-| Queue | Redis LIST LPUSH/BRPOP | Kafka / SQS / Redis Streams + consumer groups + DLQ |
+| Queue | Redis LIST atomic reserve/ACK, startup recovery, retry + DLQ | Kafka / SQS / Redis Streams + consumer groups + replay |
 | Tickets | SQLite file volume | Postgres / Jira / PagerDuty |
 | Detector state | In-process deques | Feature store / stream processor; survive restarts |
 | Auth | Optional `REMEDIATION_API_KEY`; open localhost APIs | mTLS, SSO, RBAC on approve/execute |
 | Multi-tenant | Single compose network | Namespace isolation, per-tenant quotas |
 | Topology | 4-app YAML + optional Astronomy Shop | Mesh/CMDB service graph + continuous discovery |
 | Eval dataset | ~42 RCA + ~28 anomaly (L0) + hard/OOD suites | Larger labeled set + shadow traffic + human agreement |
-| Auto-remediation | Propose / low-risk chaos reset only | Change windows, canary, automated rollback |
+| Auto-remediation | Propose-only default; explicit approval/execute transitions | Change windows, canary, automated rollback |
 
 ## Safety invariants (keep these)
 
@@ -111,6 +111,8 @@ At gather time RCA expands **upstream/downstream** neighbors into `EvidencePack`
 3. RCA fails open to **rule-based** fallback — never silent black-hole.
 4. Confidence penalties when critical context is missing.
 5. Offline evaluation must **beat weak baselines** in CI (SRE baselines reported).
+6. Default delivery is one canonical path: detector Redis → Incident Manager → Decision HTTP. Secondary webhook/decision queues are opt-in.
+7. At-least-once retries are idempotent by anomaly id; poison payloads reach a DLQ instead of disappearing.
 
 ## Sequence: one anomaly
 
@@ -130,7 +132,7 @@ See [`EVALUATION.md`](EVALUATION.md) (includes sample numbers + CV wording).
 - Report **L0** (core/holdout), **hard/OOD**, **strict** accuracy, wrong-hop rate; optional `--compare` for rule vs Bedrock.
 - Live e2e: `evaluation/evaluate_live_e2e.py` (real chaos + OTel + evidence completeness).
 - High **L0** offline scores = catalog regression coverage, **not** learned ML perfection.
-- Prefer citing **hard anomaly F1 (~0.67)** and **hard RCA (~0.60)** over L0 100% alone.
+- Prefer citing **hard anomaly F1 (~0.89)** and **hard RCA (~0.60)** over L0 100% alone.
 
 ## Optional modes
 

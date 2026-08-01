@@ -9,7 +9,12 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "shared"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from aiops_shared.topology import TopologyCatalog, load_topology_catalog  # noqa: E402
+from aiops_shared.topology import (  # noqa: E402
+    TopologyCatalog,
+    infer_edges_from_traces,
+    load_topology_catalog,
+)
+from app.evidence import _summarize_otlp_trace  # noqa: E402
 from app.models import EvidencePack  # noqa: E402
 from app.rule_fallback import rule_based_rca  # noqa: E402
 
@@ -125,3 +130,25 @@ def test_builtin_catalog_without_file():
     )
     assert cat.neighborhood("a").upstream == ["b"]
     assert cat.neighborhood("b").downstream == ["a"]
+
+
+def test_otlp_span_tree_produces_directional_service_edge():
+    payload = {
+        "resourceSpans": [
+            {
+                "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "checkout-service"}}]},
+                "scopeSpans": [{"spans": [{"spanId": "root", "name": "POST /checkout", "startTimeUnixNano": "1000000", "endTimeUnixNano": "11000000"}]}],
+            },
+            {
+                "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "payment-service"}}]},
+                "scopeSpans": [{"spans": [{"spanId": "child", "parentSpanId": "root", "name": "charge", "startTimeUnixNano": "2000000", "endTimeUnixNano": "9000000", "status": {"code": "STATUS_CODE_ERROR"}}]}],
+            },
+        ]
+    }
+    summary = _summarize_otlp_trace(payload)
+    assert summary["span_count"] == 2
+    assert summary["edges"] == [{"from": "checkout-service", "to": "payment-service", "via": "tempo_span_parent"}]
+    assert summary["error_spans"][0]["service"] == "payment-service"
+    inferred = infer_edges_from_traces("checkout-service", [summary])
+    assert inferred[0]["from"] == "checkout-service"
+    assert inferred[0]["to"] == "payment-service"

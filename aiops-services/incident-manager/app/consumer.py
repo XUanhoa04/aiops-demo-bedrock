@@ -7,7 +7,15 @@ import logging
 from typing import Optional
 
 from aiops_shared.models import AnomalyEvent, Incident
-from aiops_shared.redis_client import dequeue, enqueue, get_redis, ping
+from aiops_shared.redis_client import (
+    acknowledge,
+    enqueue,
+    get_redis,
+    ping,
+    recover_inflight,
+    reserve,
+    retry_or_dead_letter,
+)
 
 from app.config import settings
 from app.db import IncidentRepository, incident_from_anomaly
@@ -37,9 +45,17 @@ class AnomalyConsumer:
     async def start(self) -> None:
         self._stop.clear()
         self._refresh_open_gauge()
+        recovered = await asyncio.to_thread(
+            recover_inflight,
+            self.redis,
+            queue=settings.redis_queue_anomalies,
+            processing_queue=settings.redis_queue_anomalies_processing,
+        )
         self._task = asyncio.create_task(self._run(), name="anomaly-consumer")
         logger.info(
-            "consumer started queue=%s", settings.redis_queue_anomalies
+            "consumer started queue=%s recovered=%s",
+            settings.redis_queue_anomalies,
+            recovered,
         )
 
     async def stop(self) -> None:
@@ -52,14 +68,39 @@ class AnomalyConsumer:
         while not self._stop.is_set():
             try:
                 raw = await asyncio.to_thread(
-                    dequeue,
+                    reserve,
                     self.redis,
                     settings.redis_queue_anomalies,
+                    settings.redis_queue_anomalies_processing,
                     2,
                 )
                 if raw is None:
                     continue
-                await asyncio.to_thread(self._handle_payload, raw)
+                try:
+                    await asyncio.to_thread(self._handle_payload, raw)
+                except Exception as exc:
+                    disposition = await asyncio.to_thread(
+                        retry_or_dead_letter,
+                        self.redis,
+                        queue=settings.redis_queue_anomalies,
+                        processing_queue=settings.redis_queue_anomalies_processing,
+                        dead_letter_queue=settings.redis_queue_anomalies_dlq,
+                        payload=raw,
+                        error=str(exc),
+                        max_retries=settings.queue_max_retries,
+                    )
+                    logger.exception(
+                        "anomaly processing failed disposition=%s: %s",
+                        disposition,
+                        exc,
+                    )
+                    raise
+                await asyncio.to_thread(
+                    acknowledge,
+                    self.redis,
+                    settings.redis_queue_anomalies_processing,
+                    raw,
+                )
                 self.last_error = None
             except Exception as exc:
                 self.last_error = str(exc)
@@ -78,6 +119,15 @@ class AnomalyConsumer:
         source: str = "redis",
     ) -> Incident:
         """Create or correlate an incident from an anomaly event."""
+        already_processed = self.repo.get_by_anomaly_id(anomaly.id)
+        if already_processed:
+            logger.info(
+                "duplicate anomaly ignored anomaly=%s incident=%s",
+                anomaly.id,
+                already_processed.id,
+            )
+            return already_processed
+
         existing = self.repo.find_open_correlated(
             service_name=anomaly.service_name,
             metric_name=anomaly.metric_name,
@@ -108,7 +158,9 @@ class AnomalyConsumer:
             )
             if anomaly.severity.value == "critical":
                 existing.severity = anomaly.severity
-            self.repo.update(existing)
+            existing, updated = self.repo.update_for_anomaly(existing, anomaly.id)
+            if not updated:
+                return existing
             record_correlated(anomaly.service_name)
             self._refresh_open_gauge()
             logger.info(
@@ -121,7 +173,9 @@ class AnomalyConsumer:
             return existing
 
         incident = incident_from_anomaly(anomaly)
-        self.repo.insert(incident)
+        incident, created = self.repo.insert_for_anomaly(incident, anomaly.id)
+        if not created:
+            return incident
         record_created(source=source, severity=incident.severity.value, service=incident.service_name)
         self._refresh_open_gauge()
 
@@ -206,6 +260,8 @@ class AnomalyConsumer:
             "redis_ok": ping(self.redis),
             "last_error": self.last_error,
             "queue": settings.redis_queue_anomalies,
+            "processing_queue": settings.redis_queue_anomalies_processing,
+            "dead_letter_queue": settings.redis_queue_anomalies_dlq,
             "rca": self.rca.status(),
             "decision": self.decision.status(),
         }

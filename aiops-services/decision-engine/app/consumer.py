@@ -15,7 +15,14 @@ import asyncio
 import logging
 from typing import Optional
 
-from aiops_shared.redis_client import dequeue, get_redis, ping
+from aiops_shared.redis_client import (
+    acknowledge,
+    get_redis,
+    ping,
+    recover_inflight,
+    reserve,
+    retry_or_dead_letter,
+)
 
 from app.config import settings
 from app.engine import DecisionEngine
@@ -38,10 +45,17 @@ class DecisionConsumer:
             logger.info("decision redis consumer disabled")
             return
         self._stop.clear()
+        recovered = await asyncio.to_thread(
+            recover_inflight,
+            self.redis,
+            queue=settings.redis_queue_decisions,
+            processing_queue=settings.redis_queue_decisions_processing,
+        )
         self._task = asyncio.create_task(self._run(), name="decision-consumer")
         logger.info(
-            "decision consumer started queue=%s",
+            "decision consumer started queue=%s recovered=%s",
             settings.redis_queue_decisions,
+            recovered,
         )
 
     async def stop(self) -> None:
@@ -53,14 +67,39 @@ class DecisionConsumer:
         while not self._stop.is_set():
             try:
                 raw = await asyncio.to_thread(
-                    dequeue,
+                    reserve,
                     self.redis,
                     settings.redis_queue_decisions,
+                    settings.redis_queue_decisions_processing,
                     3,
                 )
                 if raw is None:
                     continue
-                await asyncio.to_thread(self._handle, raw)
+                try:
+                    await asyncio.to_thread(self._handle, raw)
+                except Exception as exc:
+                    disposition = await asyncio.to_thread(
+                        retry_or_dead_letter,
+                        self.redis,
+                        queue=settings.redis_queue_decisions,
+                        processing_queue=settings.redis_queue_decisions_processing,
+                        dead_letter_queue=settings.redis_queue_decisions_dlq,
+                        payload=raw,
+                        error=str(exc),
+                        max_retries=settings.queue_max_retries,
+                    )
+                    logger.exception(
+                        "decision processing failed disposition=%s: %s",
+                        disposition,
+                        exc,
+                    )
+                    raise
+                await asyncio.to_thread(
+                    acknowledge,
+                    self.redis,
+                    settings.redis_queue_decisions_processing,
+                    raw,
+                )
                 self.consumed += 1
                 self.last_error = None
             except Exception as exc:
@@ -99,6 +138,8 @@ class DecisionConsumer:
         return {
             "enabled": settings.enable_redis_consumer,
             "queue": settings.redis_queue_decisions,
+            "processing_queue": settings.redis_queue_decisions_processing,
+            "dead_letter_queue": settings.redis_queue_decisions_dlq,
             "redis_ok": ping(self.redis),
             "consumed": self.consumed,
             "last_error": self.last_error,

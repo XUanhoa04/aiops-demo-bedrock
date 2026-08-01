@@ -96,11 +96,69 @@ class IncidentRepository:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_incidents_created ON incidents(created_at)"
             )
+            # Older demo builds could persist the same source event more than
+            # once through Redis + webhook fan-out. Preserve the oldest ticket
+            # and make future inserts idempotent.
+            conn.execute(
+                """
+                UPDATE incidents
+                SET source_anomaly_id = NULL
+                WHERE source_anomaly_id IS NOT NULL
+                  AND rowid NOT IN (
+                    SELECT MIN(rowid) FROM incidents
+                    WHERE source_anomaly_id IS NOT NULL
+                    GROUP BY source_anomaly_id
+                  )
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_incidents_source_anomaly
+                ON incidents(source_anomaly_id)
+                WHERE source_anomaly_id IS NOT NULL
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS processed_anomalies (
+                    anomaly_id TEXT PRIMARY KEY,
+                    incident_id TEXT NOT NULL,
+                    processed_at TEXT NOT NULL
+                )
+                """
+            )
         logger.info("sqlite schema ready path=%s", self.db_path)
 
     def insert(self, incident: Incident) -> Incident:
         with self._conn() as conn:
+            self._insert_row(conn, incident)
+        return incident
+
+    def insert_for_anomaly(self, incident: Incident, anomaly_id: str) -> tuple[Incident, bool]:
+        """Insert a new ticket and delivery marker in one transaction."""
+        with self._conn() as conn:
+            existing = self._find_anomaly_row(conn, anomaly_id)
+            if existing:
+                return self._row_to_incident(existing), False
+            try:
+                self._insert_row(conn, incident)
+            except sqlite3.IntegrityError:
+                existing = conn.execute(
+                    "SELECT * FROM incidents WHERE source_anomaly_id = ?",
+                    (anomaly_id,),
+                ).fetchone()
+                if existing:
+                    return self._row_to_incident(existing), False
+                raise
             conn.execute(
+                "INSERT INTO processed_anomalies(anomaly_id, incident_id, processed_at) VALUES (?, ?, ?)",
+                (anomaly_id, incident.id, _iso(utc_now())),
+            )
+        return incident, True
+
+    @staticmethod
+    def _insert_row(conn: sqlite3.Connection, incident: Incident) -> None:
+        conn.execute(
                 """
                 INSERT INTO incidents (
                     id, title, description, status, severity, service_name,
@@ -132,7 +190,6 @@ class IncidentRepository:
                     _iso(incident.resolved_at),
                 ),
             )
-        return incident
 
     def get(self, incident_id: str) -> Optional[Incident]:
         with self._conn() as conn:
@@ -140,6 +197,25 @@ class IncidentRepository:
                 "SELECT * FROM incidents WHERE id = ?", (incident_id,)
             ).fetchone()
         return self._row_to_incident(row) if row else None
+
+    def get_by_anomaly_id(self, anomaly_id: str) -> Optional[Incident]:
+        with self._conn() as conn:
+            row = self._find_anomaly_row(conn, anomaly_id)
+        return self._row_to_incident(row) if row else None
+
+    @staticmethod
+    def _find_anomaly_row(
+        conn: sqlite3.Connection, anomaly_id: str
+    ) -> Optional[sqlite3.Row]:
+        return conn.execute(
+            """
+            SELECT i.* FROM incidents i
+            LEFT JOIN processed_anomalies p ON p.incident_id = i.id
+            WHERE p.anomaly_id = ? OR i.source_anomaly_id = ?
+            LIMIT 1
+            """,
+            (anomaly_id, anomaly_id),
+        ).fetchone()
 
     def list(
         self,
@@ -168,7 +244,28 @@ class IncidentRepository:
     def update(self, incident: Incident) -> Incident:
         incident.touch()
         with self._conn() as conn:
+            self._update_row(conn, incident)
+        return incident
+
+    def update_for_anomaly(
+        self, incident: Incident, anomaly_id: str
+    ) -> tuple[Incident, bool]:
+        """Atomically mark a delivery processed and update its ticket."""
+        incident.touch()
+        with self._conn() as conn:
+            existing = self._find_anomaly_row(conn, anomaly_id)
+            if existing:
+                return self._row_to_incident(existing), False
             conn.execute(
+                "INSERT INTO processed_anomalies(anomaly_id, incident_id, processed_at) VALUES (?, ?, ?)",
+                (anomaly_id, incident.id, _iso(utc_now())),
+            )
+            self._update_row(conn, incident)
+        return incident, True
+
+    @staticmethod
+    def _update_row(conn: sqlite3.Connection, incident: Incident) -> None:
+        conn.execute(
                 """
                 UPDATE incidents SET
                     title = ?, description = ?, status = ?, severity = ?,
@@ -200,7 +297,6 @@ class IncidentRepository:
                     incident.id,
                 ),
             )
-        return incident
 
     def find_open_correlated(
         self,

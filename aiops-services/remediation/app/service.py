@@ -53,13 +53,9 @@ class RemediationService:
         rca = self.incidents.extract_rca(incident)
         texts = actions if actions else list(rca.get("suggested_actions") or [])
         if not texts:
-            # Fallback: synthesize one low-risk chaos reset for demo services
+            # Insufficient RCA evidence must never synthesize a mutating action.
             svc = incident.get("service_name") or "checkout-service"
-            texts = [
-                f"Reset error_rate chaos on {svc}",
-                f"Investigate logs for {svc}",
-                f"Restart service {svc}",
-            ]
+            texts = [f"Investigate metrics, traces, and logs for {svc}"]
 
         default_svc = incident.get("service_name") or ""
         classified = classify_many(texts, default_service=default_svc)

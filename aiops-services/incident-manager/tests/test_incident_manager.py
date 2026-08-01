@@ -139,6 +139,11 @@ class TestHandleAnomaly(unittest.TestCase):
             self.assertEqual(int(i2.context.get("occurrence_count", 0)), 2)
             self.assertEqual(self.repo.count_open(), 1)
 
+            # At-least-once queue delivery must not increment or fan out twice.
+            i3 = consumer.handle_anomaly(a2, source="redis-retry")
+            self.assertEqual(i3.id, i1.id)
+            self.assertEqual(int(i3.context.get("occurrence_count", 0)), 2)
+
             # metrics recorded
             self.assertGreaterEqual(OPEN_INCIDENTS._value.get(), 1)
 

@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     # Dual-publish for Decision Engine (separate queue — no race with IM)
     # Env: REDIS_QUEUE_DECISIONS / ENABLE_DECISION_QUEUE
     redis_queue_decisions: str = "aiops:decisions"
-    enable_decision_queue: bool = True
+    enable_decision_queue: bool = False
     # Env: INCIDENT_WEBHOOK_URL (empty to disable)
     incident_webhook_url: str = (
         "http://aiops-incident-manager:8002/incidents/from-anomaly"
@@ -120,7 +120,7 @@ class Settings(BaseSettings):
     # Env: ENABLE_REDIS_NOTIFY
     enable_redis_notify: bool = True
     # Env: ENABLE_WEBHOOK_NOTIFY
-    enable_webhook_notify: bool = True
+    enable_webhook_notify: bool = False
     # Env: ALERT_COOLDOWN_SEC
     alert_cooldown_sec: int = 60
 

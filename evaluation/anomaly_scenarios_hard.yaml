@@ -1,8 +1,8 @@
 version: "1.0"
 dataset_name: aiops-anomaly-hard
 description: >
-  L1 hard anomaly suite. Statistical methods only — absolute_threshold set
-  extremely high so "manual" threshold cannot carry the label. Includes noise,
+  L1 noisy anomaly suite. Every sample uses the production evaluate_service
+  path; legacy absolute_threshold metadata is ignored. Includes noise,
   missing values (as null skipped), concept drift, near-threshold, and
   multivariate conflict. Expect F1 well below the clean core suite.
 scenarios:
@@ -14,7 +14,7 @@ scenarios:
     service: checkout-service
     metric_name: http_error_rate
     label: anomaly
-    # high absolute_threshold disables manual path in force_score
+    # Retained as scenario provenance; production-path evaluation ignores it.
     absolute_threshold: 9.0
     values:
       - 0.08

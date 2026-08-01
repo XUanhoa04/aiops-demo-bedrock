@@ -1,26 +1,26 @@
 # SentinelLoop
 
-**Explainable AIOps closed loop** — detect → confidence → decide → topology-aware RCA → remediate → learn.
+**Explainable AIOps control loop** — detect → confidence → decide → topology-aware RCA → gated remediation → review.
 
 Repo: [`aiops-demo-bedrock`](https://github.com/XUanhoa04/aiops-demo-bedrock)  
 [![CI](https://github.com/XUanhoa04/aiops-demo-bedrock/actions/workflows/ci.yml/badge.svg)](https://github.com/XUanhoa04/aiops-demo-bedrock/actions/workflows/ci.yml)
 
-Production-*like* portfolio project for senior SRE / Platform / AIOps interviews  
-(honest trade-offs in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
+Laptop-runnable reference implementation for SRE / Platform / AIOps teams.
+Production gaps are explicit in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 > Observability (OTel + Grafana LGTM) → **Explainable** hybrid anomaly detection →  
 > Multi-signal **confidence** → **Decision Engine** (auto / RCA / escalate) →  
 > **Grounded** Bedrock RCA → **Risk-gated** remediation → Feedback + **Engine QA**.
 
 ```bash
-cp .env.example .env          # optional AWS keys for Bedrock
+cp .env.example .env          # optional AWS credential chain for Bedrock
 docker compose up -d --build
 bash scripts/wait_for_stack.sh
 python scripts/demo_one_shot.py   # recommended one-shot path
 # Open: http://localhost:8500  ·  Grafana http://localhost:3000
 ```
 
-Without AWS keys, RCA still runs via **rule-based fallback** (safety over silence).  
+Without AWS credentials, RCA still runs via **rule-based fallback** (safety over silence).
 Offline quality gates (no Docker required for unit/eval): `bash scripts/run-evaluation.sh` or `make ci`.  
 Full eval guide: [`docs/EVALUATION.md`](docs/EVALUATION.md) · summary: `python evaluation/report_summary.py`.
 
@@ -38,7 +38,11 @@ Guide: [`docs/OTEL_DEMO.md`](docs/OTEL_DEMO.md). Default compose uses a **4-serv
 
 ---
 
-## Why this project (for hiring managers)
+## Why an SRE might use this
+
+The practical pain point is alert-to-evidence toil: one anomaly becomes one
+idempotent incident, a policy decides whether evidence is sufficient, and the
+operator lands on the relevant trace/span tree and a gated action proposal.
 
 | Senior bar | Implementation |
 |------------|----------------|
@@ -57,7 +61,7 @@ This is a **laptop-friendly demo**, not a multi-tenant SaaS. Deliberately simpli
 
 | Demo | Production would use |
 |------|----------------------|
-| Redis LIST queues | Kafka / SQS / Streams + DLQ |
+| Redis LIST reserve/ACK + retry/DLQ | Kafka / SQS / Streams + consumer groups and replay |
 | SQLite tickets | Postgres + migrations |
 | In-memory detector windows | Feature store / stream processor |
 | Optional API key on remediate | SSO + RBAC on approve/execute |
@@ -124,8 +128,8 @@ Config-driven rules live in `config/rca_patterns.yaml` (not hard-coded per scena
 3. **Correlation & incident** — Same service+metric window → one ticket (noise control).
 4. **Decision Engine** — conf≥85 + known pattern → gated remediate; 60–85 → RCA/LLM; &lt;60 → escalate.
 5. **RCA** — Evidence pack + topology neighbors; Bedrock `converse()` + JSON schema; rule fallback.
-6. **Remediation** — Low-risk auto (e.g. clear chaos); high-risk (restart/scale) needs approval (+ optional API key).
-7. **Feedback / Engine QA** — Thumbs + precision/FP/hallucination gauges + tuning advice.
+6. **Remediation** — Propose-only by default; mutations require an explicit operator transition (+ optional API key).
+7. **Feedback / Engine QA** — Thumbs + precision/FP/hallucination gauges + advisory tuning; no silent self-training.
 
 ---
 
@@ -272,7 +276,7 @@ Guide: [`docs/EVALUATION.md`](docs/EVALUATION.md).
 bash scripts/run-evaluation.sh
 python evaluation/report_summary.py
 
-# Optional: rule vs Bedrock compare (needs AWS keys)
+# Optional: rule vs Bedrock compare (needs AWS credentials or an IAM role)
 bash scripts/run-evaluation.sh --compare
 
 # Optional: live e2e (stack up)
@@ -284,7 +288,7 @@ python evaluation/evaluate_live_e2e.py --limit 10 --split core
 | Layer | Suite | Gate / report | CV tip |
 |-------|--------|---------------|--------|
 | **L0** | Anomaly clean (~28) | L0 F1 ≥ 0.70; core ≥ 0.75 | Catalog-friendly, can look high |
-| **L1** | Anomaly hard (~16) | Reported (stats-only / noise) | Prefer this F1 on a CV |
+| **L1** | Anomaly hard (~16) | Reported (noisy synthetic) | Prefer this F1 on a CV |
 | **L0** | RCA core/holdout (~42) | core ≥ 0.85; holdout ≥ 0.55 | Config pattern regression |
 | **strict** | Same RCA set | strict acc ≥ 0.40; wrong-hop ≤ 0.25 | No keyword-only “correct” |
 | **L1** | RCA hard OOD (~10) | Reported | DNS/TLS/disk must not invent pool |
@@ -295,7 +299,7 @@ python evaluation/evaluate_live_e2e.py --limit 10 --split core
 
 | Layer | Metric | Sample |
 |-------|--------|--------|
-| Anomaly L0 / hard / overall | F1 | **~0.97 / 0.67 / 0.88** |
+| Anomaly L0 / hard / overall | F1 | **1.00 / 0.89 / 0.96** |
 | RCA core+holdout (catalog) | Acc | **~1.00** (L0 regression) |
 | RCA hard OOD | Acc default / strict | **~0.60 / 0.50** |
 | RCA overall (n≈52) | Acc default / strict | **~0.92 / 0.90** · wrong-hop **0%** |
@@ -382,9 +386,9 @@ aiops-demo-bedrock/
 | Demo choice | Why | Production evolution |
 |-------------|-----|----------------------|
 | Prom **pull** detection | Isolate blast radius; same queries as humans | Stream processor / remote_write for scale |
-| Redis LIST | Teach detect→act; zero ops | Kafka/SQS + DLQ + consumer groups |
+| Redis LIST reserve/ACK | Zero-ops at-least-once demo with retry/DLQ | Kafka/SQS + replay + consumer groups |
 | SQLite WAL | Laptop CV demo | Postgres multi-AZ + PITR |
-| Async RCA webhook | Don't block ticket path on LLM latency | Outbox + workers + retries |
+| HTTP policy/RCA calls | Easy local tracing and bounded timeouts | Transactional outbox + durable workers |
 | Grounded JSON RCA | Prevent hallucination | Schema registry + eval harness |
 | Risk gates | Prevent runaway automation | Change freezes, dual control, policy engine |
 | Feedback gauges | AIOps must observe itself | Retrain/detector calibration pipelines |
@@ -407,6 +411,8 @@ aiops-demo-bedrock/
 | `BEDROCK_MODEL_ID` | Default `amazon.nova-lite-v1:0` |
 | `RCA_ENGINE_URL` | Incident → RCA |
 | `REMEDIATION_URL` | RCA → propose actions |
+| `REMEDIATION_API_KEY` | Authenticate every remediation mutation when set |
+| `ENABLE_WEBHOOK_NOTIFY` / `ENABLE_DECISION_QUEUE` | Optional secondary delivery paths; off by default to avoid duplicates |
 | `ZSCORE_THRESHOLD` / `ERROR_RATE_THRESHOLD` | Detector sensitivity |
 
 ---
@@ -423,11 +429,11 @@ curl -s http://localhost:8002/incidents/<id>/observability-links | jq .
 | Issue | Fix |
 |-------|-----|
 | Trace button opens empty Explore | Confirm Tempo has traces (generate load); check datasource UID in Grafana |
-| RCA always rule-based | Set AWS keys; use an enabled model id |
+| RCA always rule-based | Configure the standard AWS credential chain/IAM role and an enabled model id |
 | Port conflicts | Free 3000/9090/8001–8005/8501–8502 |
 
 ---
 
 ## License
 
-MIT — portfolio / workshop use. Never commit `.env` secrets.
+MIT — see [`LICENSE`](LICENSE). Never commit `.env` secrets.
