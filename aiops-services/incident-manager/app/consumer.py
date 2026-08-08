@@ -7,6 +7,7 @@ import logging
 from typing import Optional
 
 from aiops_shared.models import AnomalyEvent, Incident
+from aiops_shared.topology import TopologyCatalog, load_topology_catalog
 from aiops_shared.redis_client import (
     acknowledge,
     enqueue,
@@ -26,16 +27,32 @@ from app.rca_client import RCAClient
 logger = logging.getLogger(__name__)
 
 
+def _metric_family(metric_name: Optional[str]) -> str:
+    """Collapse metric spellings without mixing unrelated failure modes."""
+    name = (metric_name or "").lower()
+    if "error" in name or "5xx" in name or "failure" in name:
+        return "errors"
+    if "latency" in name or "duration" in name or "response_time" in name:
+        return "latency"
+    if "cpu" in name or "memory" in name or "saturation" in name:
+        return "saturation"
+    if "request" in name or "traffic" in name or "rate" in name:
+        return "traffic"
+    return name
+
+
 class AnomalyConsumer:
     def __init__(
         self,
         repo: IncidentRepository,
         rca: Optional[RCAClient] = None,
         decision: Optional[DecisionClient] = None,
+        topology: Optional[TopologyCatalog] = None,
     ) -> None:
         self.repo = repo
         self.rca = rca or RCAClient()
         self.decision = decision or DecisionClient()
+        self.topology = topology or load_topology_catalog(settings.topology_path or None)
         self.redis = get_redis(settings.redis_url)
         self._task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
@@ -133,13 +150,52 @@ class AnomalyConsumer:
             metric_name=anomaly.metric_name,
             window_minutes=settings.correlation_window_minutes,
         )
+        correlation_kind = "same_series"
+        if not existing and settings.enable_topology_correlation:
+            neighborhood = self.topology.neighborhood(anomaly.service_name)
+            related_services = neighborhood.all_neighbors()
+            candidates = self.repo.find_open_for_services(
+                related_services,
+                window_minutes=settings.correlation_window_minutes,
+            )
+            family = _metric_family(anomaly.metric_name)
+            existing = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if _metric_family(candidate.metric_name) == family
+                ),
+                None,
+            )
+            if existing:
+                correlation_kind = "topology_cascade"
         if existing:
             # Update metric snapshot; keep single ticket (noise reduction)
             existing.metric_value = anomaly.metric_value
+            affected_services = list(existing.context.get("affected_services") or [])
+            if existing.service_name not in affected_services:
+                affected_services.append(existing.service_name)
+            if anomaly.service_name not in affected_services:
+                affected_services.append(anomaly.service_name)
+
+            suspected_root = existing.context.get("suspected_root_service")
+            existing_neighborhood = self.topology.neighborhood(existing.service_name)
+            if anomaly.service_name in existing_neighborhood.upstream:
+                suspected_root = anomaly.service_name
+            elif not suspected_root:
+                suspected_root = existing.service_name
+
             existing.context = {
                 **existing.context,
                 "last_anomaly_id": anomaly.id,
                 "occurrence_count": int(existing.context.get("occurrence_count", 1)) + 1,
+                "affected_services": affected_services,
+                "correlation": {
+                    "kind": correlation_kind,
+                    "window_minutes": settings.correlation_window_minutes,
+                    "latest_service": anomaly.service_name,
+                },
+                "suspected_root_service": suspected_root,
                 # anomaly_details keeps the latest detector payload for UI/RCA
                 "anomaly_details": {
                     "anomaly_id": anomaly.id,
@@ -164,11 +220,16 @@ class AnomalyConsumer:
             record_correlated(anomaly.service_name)
             self._refresh_open_gauge()
             logger.info(
-                "correlated anomaly=%s → incident=%s count=%s",
+                "correlated anomaly=%s → incident=%s kind=%s count=%s",
                 anomaly.id,
                 existing.id,
+                correlation_kind,
                 existing.context.get("occurrence_count"),
             )
+            # A new service joining a cascade materially changes RCA evidence;
+            # refresh the control plane once, while same-series dedup stays quiet.
+            if correlation_kind == "topology_cascade":
+                self.fanout_new_incident(existing, anomaly=anomaly)
             self.processed += 1
             return existing
 

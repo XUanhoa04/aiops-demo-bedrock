@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # Set REMEDIATION_API_KEY in .env for a production-like gate; Streamlit and
     # curl must send header X-API-Key: <value>.
     remediation_api_key: str = ""
+    # Cross-request/process lock on the logical target resource. Locks are
+    # persisted in remediation.db and stale locks expire after this TTL.
+    resource_lock_ttl_sec: int = 120
+    verify_after_execute: bool = True
     cors_allowed_origins: str = "http://localhost:8501,http://127.0.0.1:8501"
 
     @property

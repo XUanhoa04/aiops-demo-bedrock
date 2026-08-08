@@ -86,7 +86,8 @@ class IncidentCreate(BaseModel):
     severity: AnomalySeverity = AnomalySeverity.MEDIUM
     metric_name: Optional[str] = None
     metric_value: Optional[float] = None
-    # Optional ops / live-e2e context (fault_detail seed, evaluation flags)
+    # Optional structured operator/integration context. RCA does not treat this
+    # field as observed log/trace evidence.
     context: Optional[dict] = None
 
 

@@ -63,7 +63,7 @@ This is a **laptop-friendly demo**, not a multi-tenant SaaS. Deliberately simpli
 |------|----------------------|
 | Redis LIST reserve/ACK + retry/DLQ | Kafka / SQS / Streams + consumer groups and replay |
 | SQLite tickets | Postgres + migrations |
-| In-memory detector windows | Feature store / stream processor |
+| Redis-AOF checkpointed detector windows | Feature store / stream processor with replay |
 | Optional API key on remediate | SSO + RBAC on approve/execute |
 
 Full diagram & decision rationale: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
@@ -125,10 +125,10 @@ Config-driven rules live in `config/rca_patterns.yaml` (not hard-coded per scena
 
 1. **Observability** — 4 apps export OTLP to LGTM (metrics + logs + traces).
 2. **Anomaly detection** — Hybrid EWMA/z-score/STL + IsolationForest; multi-signal confidence 0–100.
-3. **Correlation & incident** — Same service+metric window → one ticket (noise control).
+3. **Correlation & incident** — Same series dedup + topology-connected cascade grouping by metric family → one ticket.
 4. **Decision Engine** — conf≥85 + known pattern → gated remediate; 60–85 → RCA/LLM; &lt;60 → escalate.
 5. **RCA** — Evidence pack + topology neighbors; Bedrock `converse()` + JSON schema; rule fallback.
-6. **Remediation** — Propose-only by default; mutations require an explicit operator transition (+ optional API key).
+6. **Remediation** — Propose-only by default; per-service lock serializes mutations; reversible chaos resets are verified and rolled back on failed health checks.
 7. **Feedback / Engine QA** — Thumbs + precision/FP/hallucination gauges + advisory tuning; no silent self-training.
 
 ---
@@ -412,6 +412,9 @@ aiops-demo-bedrock/
 | `RCA_ENGINE_URL` | Incident → RCA |
 | `REMEDIATION_URL` | RCA → propose actions |
 | `REMEDIATION_API_KEY` | Authenticate every remediation mutation when set |
+| `ENABLE_STATE_PERSISTENCE` / `DETECTOR_STATE_KEY` | Restore detector baselines from AOF-backed Redis after restart |
+| `ENABLE_TOPOLOGY_CORRELATION` | Group connected-service symptoms into one cascading incident |
+| `RESOURCE_LOCK_TTL_SEC` / `VERIFY_AFTER_EXECUTE` | Serialize service actions and enable post-action verification |
 | `ENABLE_WEBHOOK_NOTIFY` / `ENABLE_DECISION_QUEUE` | Optional secondary delivery paths; off by default to avoid duplicates |
 | `ZSCORE_THRESHOLD` / `ERROR_RATE_THRESHOLD` | Detector sensitivity |
 

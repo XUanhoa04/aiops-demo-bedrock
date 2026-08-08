@@ -6,17 +6,14 @@ Flow per scenario (with live_chaos)
 -----------------------------------
   1. Inject chaos on target service (checkout/payment/inventory/fraud)
   2. Generate /checkout traffic so Prom/Loki/Tempo fill
-  3. Wait for detector / create ticket with seeded fault context
+  3. Wait for detector / use its ticket (or create a neutral ticket)
   4. Force RCA analyze (rule-based by default)
   5. Score root_cause vs ground truth (default + strict)
   6. Record evidence completeness (logs/metrics/traces)
   7. Reset chaos
 
-Ticket context seeding
-----------------------
-When Loki is empty/lagging, the incident carries chaos fault_detail so
-rule RCA can still match catalog phrases (documented as evidence_seeded).
-Pure Loki path is preferred when logs appear.
+Ground truth is retained only in the evaluator process for scoring. It is never
+sent in the ticket title, description, context, or RCA request.
 
 Usage
 -----
@@ -148,6 +145,7 @@ def drive_load(checkout: str, seconds: int, rps: float) -> tuple[int, int]:
 def find_recent_incident(
     incident_url: str,
     service_name: str,
+    max_age_seconds: int = 300,
 ) -> Optional[dict]:
     try:
         items = http_json(
@@ -167,6 +165,14 @@ def find_recent_incident(
             continue
         if service_name and service_name not in str(inc.get("service_name") or ""):
             continue
+        created_raw = str(inc.get("created_at") or "")
+        try:
+            created = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - created).total_seconds()
+            if age < 0 or age > max_age_seconds:
+                continue
+        except (TypeError, ValueError):
+            continue
         return inc
     return None
 
@@ -183,65 +189,23 @@ def resolve_fault_detail(svc_short: str, fault_mode: str) -> str:
 def ensure_incident(
     incident_url: str,
     service_name: str,
-    scenario_id: str,
-    gt: str,
-    *,
-    fault_mode: str,
-    fault_detail: str,
-    seed_context: bool,
 ) -> dict:
     found = find_recent_incident(incident_url, service_name)
-    if found and not seed_context:
+    if found:
         return found
 
-    # Always create a fresh eval ticket with optional seeded fault context so
-    # RCA can match when Loki is lagging (documented honesty flag).
-    description = {
-        "evaluation": True,
-        "live_e2e": True,
-        "scenario_id": scenario_id,
-        "ground_truth": gt[:300],
-        "fault_mode": fault_mode,
-        "fault_detail": fault_detail if seed_context else None,
-        "seeded_log_line": (
-            f"ERROR {service_name} failure fault_mode={fault_mode} detail={fault_detail}"
-            if seed_context
-            else None
-        ),
-    }
-    title = f"[e2e] {scenario_id}"
-    if seed_context and fault_detail:
-        title = f"[e2e] {scenario_id} :: {fault_detail[:60]}"
+    # Neutral fallback ticket: no scenario id, fault class, or ground truth.
     return http_json(
         "POST",
         f"{incident_url.rstrip('/')}/incidents",
         {
-            "title": title,
-            "description": json.dumps(description)[:4000],
+            "title": "[e2e] Live observability incident",
+            "description": json.dumps({"evaluation": True, "live_e2e": True}),
             "service_name": service_name,
             "severity": "high",
             "metric_name": "http_error_rate",
             "metric_value": 0.4,
-            "context": {
-                "live_e2e": {
-                    "scenario_id": scenario_id,
-                    "fault_mode": fault_mode,
-                    "fault_detail": fault_detail if seed_context else None,
-                    "log_line": (
-                        f"ERROR {service_name} failure fault_mode={fault_mode} "
-                        f"detail={fault_detail}"
-                        if seed_context
-                        else None
-                    ),
-                },
-                "fault_detail": fault_detail if seed_context else None,
-                "fault_mode": fault_mode,
-                "seeded_log_line": (
-                    f"ERROR {service_name} failure fault_mode={fault_mode} detail={fault_detail}"
-                    if seed_context
-                    else None
-                ),
-            },
+            "context": {"evaluation": True, "live_e2e": True},
         },
     )
 
@@ -250,21 +214,23 @@ def probe_evidence_sources(rca: dict) -> dict[str, Any]:
     sources = (rca or {}).get("evidence_sources") or {}
     result = (rca or {}).get("result") or {}
     evidence = result.get("evidence") or []
-    blob = " ".join(str(e) for e in evidence).lower()
-    has_logs = any("log:" in str(e).lower() and "no error" not in str(e).lower() and "no loki" not in str(e).lower() for e in evidence)
+    has_logs = any(
+        "log:" in str(e).lower()
+        and "no error" not in str(e).lower()
+        and "no loki" not in str(e).lower()
+        for e in evidence
+    )
     has_metrics = any("metrics:" in str(e).lower() for e in evidence)
     has_traces = any("trace:" in str(e).lower() for e in evidence)
     pattern_hit = any("pattern:" in str(e).lower() for e in evidence)
-    ticket_seed = "ticket/context" in blob or "no loki lines" in blob
     return {
         "sources_ok": sources,
         "has_log_evidence": has_logs,
         "has_metric_evidence": has_metrics,
         "has_trace_evidence": has_traces,
         "pattern_matched": pattern_hit,
-        "used_ticket_seed": ticket_seed,
         "completeness": round(
-            sum([has_logs or ticket_seed, has_metrics, has_traces]) / 3.0, 4
+            sum([has_logs, has_metrics, has_traces]) / 3.0, 4
         ),
     }
 
@@ -279,7 +245,6 @@ def run_one(
     rps: float,
     wait_detector: int,
     force_rule_based: bool = True,
-    seed_context: bool = True,
 ) -> dict[str, Any]:
     sid = str(sc.get("scenario_id"))
     gt = sc.get("ground_truth_root_cause") or ""
@@ -320,7 +285,7 @@ def run_one(
         "chaos": payload,
         "fault_detail": fault_detail,
         "ground_truth": gt,
-        "evidence_seeded": bool(seed_context),
+        "evidence_seeded": False,
     }
     try:
         post_chaos(base, payload)
@@ -342,11 +307,6 @@ def run_one(
         inc = ensure_incident(
             incident_url,
             ticket_service,
-            sid,
-            gt,
-            fault_mode=fault_mode,
-            fault_detail=fault_detail,
-            seed_context=seed_context,
         )
         iid = str(inc.get("id") or "")
         row["incident_id"] = iid
@@ -387,10 +347,9 @@ def run_one(
                 "has_metric_evidence": ev.get("has_metric_evidence"),
                 "has_trace_evidence": ev.get("has_trace_evidence"),
                 "pattern_matched": ev.get("pattern_matched"),
-                "used_ticket_seed": ev.get("used_ticket_seed"),
                 "notes": (
                     f"status={(rca or {}).get('status')} "
-                    f"seeded={seed_context} "
+                    "ground_truth_isolated=true "
                     f"completeness={ev.get('completeness')}"
                 ),
             }
@@ -401,7 +360,7 @@ def run_one(
         ):
             row["notes"] = (
                 (row.get("notes") or "")
-                + " | weak RCA path — check Loki labels / seed_context"
+                + " | weak RCA path — check Loki labels / OTel ingestion"
             )
     except Exception as exc:
         row["correct"] = False
@@ -451,11 +410,6 @@ def main() -> int:
         help="Allow live Bedrock path (disables force_rule_based)",
     )
     p.add_argument(
-        "--no-seed-context",
-        action="store_true",
-        help="Do not seed fault_detail into incident (pure Loki/Prom/Tempo only)",
-    )
-    p.add_argument(
         "--output",
         type=Path,
         default=EVAL_DIR / "results" / "rca_live_e2e_latest.json",
@@ -492,10 +446,9 @@ def main() -> int:
     if args.limit > 0:
         scenarios = scenarios[: args.limit]
 
-    seed_context = not args.no_seed_context
     print(
         f"=== Live E2E RCA n={len(scenarios)} split={args.split} "
-        f"seed_context={seed_context} ==="
+        f"ground_truth_isolated=true ==="
     )
     rows: list[dict] = []
     for sc in scenarios:
@@ -509,7 +462,6 @@ def main() -> int:
             rps=args.rps,
             wait_detector=args.wait_detector,
             force_rule_based=(not args.allow_bedrock),
-            seed_context=seed_context,
         )
         rows.append(row)
         print(
@@ -538,7 +490,7 @@ def main() -> int:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "kind": "live_e2e",
         "split_filter": args.split,
-        "seed_context": seed_context,
+        "seed_context": False,
         "aggregate": {
             "n": len(scored),
             "correct": correct,
@@ -550,10 +502,8 @@ def main() -> int:
         },
         "rows": rows,
         "note": (
-            "Live path uses real chaos + OTel + RCA API. "
-            "seed_context=true attaches fault_detail to the ticket when Loki "
-            "may lag — score is higher than pure Loki-only runs. "
-            "Use --no-seed-context for pure observability path."
+            "Live path uses real chaos + OTel + RCA API. Ground truth and fault "
+            "labels stay evaluator-side and are never sent to the RCA path."
         ),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

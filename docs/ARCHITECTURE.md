@@ -85,7 +85,7 @@ At gather time RCA expands **upstream/downstream** neighbors into `EvidencePack`
 |--------|-----------|
 | EWMA + Z-score | Explainable to on-call (“2.8σ above EWMA”); works with short windows |
 | STL (optional) | Avoid diurnal false positives when seasonality strength is real |
-| IsolationForest | Joint RED outliers rules miss; contamination~0.08 for mostly-healthy demos |
+| IsolationForest | Joint RED outliers rules miss; `contamination=auto` plus a robust-z gate over historical model scores avoids assuming a fixed anomaly percentage |
 | Confidence 40/30/20/10 (metrics/traces/logs/events) | Detector is metric-first; traces beat logs for RCA; events sparse |
 | Decision bands 85 / 60 | High conf + known pattern → gated remediate; medium → LLM; low → escalate |
 | Bedrock only on medium band | Cost control — don’t spend tokens on obvious chaos resets or empty context |
@@ -97,12 +97,12 @@ At gather time RCA expands **upstream/downstream** neighbors into `EvidencePack`
 |------|-------------|----------------------|
 | Queue | Redis LIST atomic reserve/ACK, startup recovery, retry + DLQ | Kafka / SQS / Redis Streams + consumer groups + replay |
 | Tickets | SQLite file volume | Postgres / Jira / PagerDuty |
-| Detector state | In-process deques | Feature store / stream processor; survive restarts |
+| Detector state | Bounded deques checkpointed as JSON to AOF-backed Redis; thresholds remain a cold-start fallback | Feature store / stream processor with source replay |
 | Auth | Optional `REMEDIATION_API_KEY`; open localhost APIs | mTLS, SSO, RBAC on approve/execute |
 | Multi-tenant | Single compose network | Namespace isolation, per-tenant quotas |
-| Topology | 4-app YAML + optional Astronomy Shop | Mesh/CMDB service graph + continuous discovery |
+| Topology | YAML seed merged with Tempo-derived runtime edges; optional Astronomy Shop | Mesh/CMDB service graph + continuous discovery |
 | Eval dataset | ~42 RCA + ~28 anomaly (L0) + hard/OOD suites | Larger labeled set + shadow traffic + human agreement |
-| Auto-remediation | Propose-only default; explicit approval/execute transitions | Change windows, canary, automated rollback |
+| Auto-remediation | Propose-only; SQLite per-service locks; verify + rollback for reversible chaos resets | Policy engine, change windows, canary, workload-native rollback |
 
 ## Safety invariants (keep these)
 
@@ -113,6 +113,18 @@ At gather time RCA expands **upstream/downstream** neighbors into `EvidencePack`
 5. Offline evaluation must **beat weak baselines** in CI (SRE baselines reported).
 6. Default delivery is one canonical path: detector Redis → Incident Manager → Decision HTTP. Secondary webhook/decision queues are opt-in.
 7. At-least-once retries are idempotent by anomaly id; poison payloads reach a DLQ instead of disappearing.
+8. Mutating remediation actions acquire a TTL-bound service lock across API requests/processes.
+9. Reversible chaos resets capture prior state, verify health/state, and roll back on verification failure. Restart/scale still require platform-native rollback in production.
+10. LLM evidence is reduced by complete JSON records under a character budget; it is never sliced into invalid JSON mid-record.
+11. Python application logs use an OTLP `LoggingHandler`; trace-context instrumentation alone is not considered log delivery.
+
+### Known gaps that remain
+
+- Kafka/RabbitMQ publish-consume causality is not modeled; trace/runtime edge inference currently targets request/span relationships.
+- Redis remains a single demo queue/state dependency with no producer backpressure or HA failover.
+- `REMEDIATION_API_KEY` is authentication, not role-based authorization or dual control.
+- Restart/scale actions do not have a platform-native canary/rollback controller.
+- Offline/live-short evaluation does not prove quiet-day false-positive rate, MTTR improvement, or operator cognitive load.
 
 ## Sequence: one anomaly
 

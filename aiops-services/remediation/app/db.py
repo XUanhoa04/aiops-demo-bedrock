@@ -6,7 +6,7 @@ import json
 import logging
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Generator, Optional
 
@@ -72,6 +72,28 @@ class ActionRepository:
                 )
                 """
             )
+            self._ensure_column(
+                conn,
+                "remediation_actions",
+                "verification_json",
+                "TEXT NOT NULL DEFAULT '{}'",
+            )
+            self._ensure_column(
+                conn,
+                "remediation_actions",
+                "rollback_json",
+                "TEXT NOT NULL DEFAULT '{}'",
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS remediation_resource_locks (
+                    resource_key TEXT PRIMARY KEY,
+                    owner_action_id TEXT NOT NULL,
+                    acquired_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )
+                """
+            )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_rem_incident "
                 "ON remediation_actions(incident_id)"
@@ -82,6 +104,17 @@ class ActionRepository:
             )
         logger.info("remediation sqlite ready path=%s", self.db_path)
 
+    @staticmethod
+    def _ensure_column(
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        definition: str,
+    ) -> None:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
     def insert(self, rec: ActionRecord) -> ActionRecord:
         with self._conn() as conn:
             conn.execute(
@@ -89,8 +122,9 @@ class ActionRepository:
                 INSERT INTO remediation_actions (
                     id, incident_id, action_type, action_text, target_service,
                     risk_level, status, payload_json, result, executed_by,
-                    command, created_at, updated_at, executed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    command, created_at, updated_at, executed_at,
+                    verification_json, rollback_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rec.id,
@@ -107,6 +141,8 @@ class ActionRepository:
                     _iso(rec.created_at),
                     _iso(rec.updated_at),
                     _iso(rec.executed_at),
+                    json.dumps(rec.verification),
+                    json.dumps(rec.rollback),
                 ),
             )
         return rec
@@ -119,7 +155,8 @@ class ActionRepository:
                 UPDATE remediation_actions SET
                     action_type=?, action_text=?, target_service=?,
                     risk_level=?, status=?, payload_json=?, result=?,
-                    executed_by=?, command=?, updated_at=?, executed_at=?
+                    executed_by=?, command=?, updated_at=?, executed_at=?,
+                    verification_json=?, rollback_json=?
                 WHERE id=?
                 """,
                 (
@@ -134,6 +171,8 @@ class ActionRepository:
                     rec.command,
                     _iso(rec.updated_at),
                     _iso(rec.executed_at),
+                    json.dumps(rec.verification),
+                    json.dumps(rec.rollback),
                     rec.id,
                 ),
             )
@@ -177,6 +216,48 @@ class ActionRepository:
             ).fetchall()
         return {r["status"]: r["c"] for r in rows}
 
+    def try_acquire_resource_lock(
+        self,
+        resource_key: str,
+        owner_action_id: str,
+        ttl_sec: int,
+    ) -> tuple[bool, Optional[str]]:
+        """Atomically acquire a cross-thread/process resource lock."""
+        now = utc_now()
+        expires = now + timedelta(seconds=max(1, ttl_sec))
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "DELETE FROM remediation_resource_locks WHERE expires_at <= ?",
+                (_iso(now),),
+            )
+            row = conn.execute(
+                "SELECT owner_action_id FROM remediation_resource_locks WHERE resource_key=?",
+                (resource_key,),
+            ).fetchone()
+            if row:
+                return False, str(row["owner_action_id"])
+            conn.execute(
+                """
+                INSERT INTO remediation_resource_locks(
+                    resource_key, owner_action_id, acquired_at, expires_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (resource_key, owner_action_id, _iso(now), _iso(expires)),
+            )
+        return True, None
+
+    def release_resource_lock(self, resource_key: str, owner_action_id: str) -> bool:
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM remediation_resource_locks
+                WHERE resource_key=? AND owner_action_id=?
+                """,
+                (resource_key, owner_action_id),
+            )
+        return cursor.rowcount > 0
+
     @staticmethod
     def _row_to_record(row: sqlite3.Row) -> ActionRecord:
         return ActionRecord(
@@ -191,6 +272,8 @@ class ActionRepository:
             result=row["result"],
             executed_by=row["executed_by"],
             command=row["command"],
+            verification=json.loads(row["verification_json"] or "{}"),
+            rollback=json.loads(row["rollback_json"] or "{}"),
             created_at=_parse_dt(row["created_at"]) or utc_now(),
             updated_at=_parse_dt(row["updated_at"]) or utc_now(),
             executed_at=_parse_dt(row["executed_at"]),

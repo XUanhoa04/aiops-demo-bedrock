@@ -72,3 +72,36 @@ def test_rule_uses_catalog_not_scenario_id():
     )
     result = rule_based_rca(pack)
     assert "gateway" in result.root_cause.lower() or "payment" in result.root_cause.lower()
+
+
+def test_rule_does_not_treat_ticket_ground_truth_as_observed_evidence():
+    """Evaluation/operator text must not substitute for Loki/Tempo evidence."""
+    clear_pattern_cache()
+    pack = EvidencePack(
+        incident_id="opaque",
+        service_name="checkout-service",
+        window_minutes=15,
+        window_start_iso="2020-01-01T00:00:00+00:00",
+        window_end_iso="2020-01-01T00:15:00+00:00",
+        incident={
+            "title": "payment database pool exhaustion",
+            "description": '{"ground_truth":"payment database pool exhaustion"}',
+            "context": {
+                "live_e2e": {
+                    "fault_detail": "database connection pool exhausted",
+                    "log_line": "ERROR pool exhausted",
+                }
+            },
+            "metric_name": "http_error_rate",
+            "metric_value": 0.4,
+        },
+        metrics_summary={"instant": {"http_error_rate": 0.4}},
+        error_logs=[],
+        neighbor_logs=[],
+        traces=[],
+        sources_ok={"prometheus": True, "loki": True, "tempo": True},
+    )
+
+    result = rule_based_rca(pack)
+    assert "pool exhaustion" not in result.root_cause.lower()
+    assert not any("pattern:db_pool" in item for item in result.evidence)

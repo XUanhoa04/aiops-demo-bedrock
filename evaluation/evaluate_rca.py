@@ -160,13 +160,12 @@ def scenario_to_evidence_pack(sc: dict[str, Any]):
         incident={
             "id": f"eval-{sc.get('scenario_id')}",
             "service_name": primary,
-            "title": sc.get("description") or sc.get("scenario_id"),
+            "title": "Offline evaluation incident",
             "severity": "high",
             "metric_name": next(iter(instant), "http_error_rate"),
             "metric_value": next(iter(instant.values()), 0.0) if instant else 0.0,
             "threshold": 0.15,
             "context": {
-                "explanation": f"evaluation scenario {sc.get('scenario_id')}",
                 "evaluation": True,
             },
         },
@@ -418,13 +417,10 @@ def run_online(
                 "POST",
                 f"{incident_url.rstrip('/')}/incidents",
                 {
-                    "title": f"[eval] {sc.get('scenario_id')}: {sc.get('description', '')[:80]}",
+                    "title": "[eval] RCA evaluation incident",
                     "description": json.dumps(
                         {
                             "evaluation": True,
-                            "scenario_id": sc.get("scenario_id"),
-                            "ground_truth": sc.get("ground_truth_root_cause"),
-                            "symptoms": sc.get("symptoms"),
                         }
                     )[:4000],
                     "service_name": pack.service_name,

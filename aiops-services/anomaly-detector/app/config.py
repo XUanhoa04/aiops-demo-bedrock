@@ -66,9 +66,15 @@ class Settings(BaseSettings):
 
     # --- ML detector (IsolationForest) ---
     # Env: IFOREST_CONTAMINATION
-    iforest_contamination: float = 0.08
+    # "auto" does not assume a fixed percentage of traffic must be anomalous.
+    # A numeric string in (0, 0.5] remains supported after calibration.
+    iforest_contamination: str = "auto"
     # Env: IFOREST_N_ESTIMATORS
     iforest_n_estimators: int = 100
+    # Candidate must also be this many robust sigmas below the historical
+    # IsolationForest score distribution. This prevents the model boundary
+    # alone from turning benign edge samples into alerts.
+    iforest_robust_z_threshold: float = 3.5
     # Env: HYBRID_VOTE = any | majority | all
     hybrid_vote: str = "any"
 
@@ -132,6 +138,20 @@ class Settings(BaseSettings):
 
     def watched_service_list(self) -> list[str]:
         return [s.strip() for s in self.watched_services.split(",") if s.strip()]
+
+    @property
+    def iforest_contamination_value(self) -> str | float:
+        raw = str(self.iforest_contamination).strip().lower()
+        if raw == "auto":
+            return "auto"
+        value = float(raw)
+        if not 0.0 < value <= 0.5:
+            raise ValueError("IFOREST_CONTAMINATION must be 'auto' or in (0, 0.5]")
+        return value
+
+    # Durable detector checkpoint (Redis is AOF-backed in docker-compose).
+    enable_state_persistence: bool = True
+    detector_state_key: str = "aiops:detector:state:v1"
 
 
 settings = Settings()

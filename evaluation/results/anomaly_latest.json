@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-01T10:28:51.643344+00:00",
+  "generated_at": "2026-08-08T15:00:08.211814+00:00",
   "dataset": [
     "D:\\project\\aiops-demo-bedrock\\evaluation\\anomaly_scenarios.yaml",
     "D:\\project\\aiops-demo-bedrock\\evaluation\\anomaly_scenarios_hard.yaml"
@@ -565,8 +565,7 @@
       "methods": [
         "zscore",
         "ewma_zscore",
-        "threshold",
-        "isolation_forest"
+        "threshold"
       ],
       "last_value": {
         "http_request_rate": 3.0,
@@ -584,8 +583,7 @@
       "score": 30.1924,
       "methods": [
         "zscore",
-        "ewma_zscore",
-        "isolation_forest"
+        "ewma_zscore"
       ],
       "last_value": {
         "http_request_rate": 45.0,

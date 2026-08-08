@@ -83,12 +83,16 @@ class RemediationService:
             )
             self.repo.insert(rec)
 
-            if auto and risk_allows_auto(rec) and rec.action_type != ActionType.LOG_ONLY.value:
-                rec = self.executor.execute(rec, executed_by=settings.default_executor)
-                self.repo.update(rec)
-            elif auto and rec.action_type == ActionType.LOG_ONLY.value:
-                rec = self.executor.execute(rec, executed_by=settings.default_executor)
-                self.repo.update(rec)
+            if auto and (
+                risk_allows_auto(rec) or rec.action_type == ActionType.LOG_ONLY.value
+            ):
+                # Use the same guarded path as manual execution so auto actions
+                # cannot bypass resource locking, verification, or audit updates.
+                rec = self.execute(
+                    rec.id,
+                    executed_by=settings.default_executor,
+                    force=False,
+                )
 
             created.append(rec)
             logger.info(
@@ -120,7 +124,7 @@ class RemediationService:
         rec.executed_by = executed_by
         self.repo.update(rec)
         if execute_now:
-            return self.execute(action_id, executed_by=executed_by, force=True)
+            return self.execute(action_id, executed_by=executed_by, force=False)
         return rec
 
     def execute(
@@ -137,14 +141,37 @@ class RemediationService:
         if rec.status in (ActionStatus.EXECUTED, ActionStatus.SIMULATED):
             return rec
 
+        if rec.status == ActionStatus.REJECTED:
+            rec.result = "blocked: rejected action cannot be executed"
+            return self.repo.update(rec)
+
         # High-risk requires approval unless force
         if rec.risk_level == RiskLevel.HIGH and rec.status != ActionStatus.APPROVED and not force:
             rec.result = "blocked: high-risk action requires approval"
             self.repo.update(rec)
             return rec
 
-        rec = self.executor.execute(rec, executed_by=executed_by)
-        self.repo.update(rec)
+        resource_key = self._resource_key(rec)
+        acquired = True
+        owner: Optional[str] = None
+        if resource_key:
+            acquired, owner = self.repo.try_acquire_resource_lock(
+                resource_key,
+                rec.id,
+                settings.resource_lock_ttl_sec,
+            )
+        if not acquired:
+            rec.result = (
+                f"blocked: resource {resource_key} is locked by action {owner}"
+            )
+            return self.repo.update(rec)
+
+        try:
+            rec = self.executor.execute(rec, executed_by=executed_by)
+            self.repo.update(rec)
+        finally:
+            if resource_key:
+                self.repo.release_resource_lock(resource_key, rec.id)
 
         # Reflect on incident ticket
         try:
@@ -185,6 +212,19 @@ class RemediationService:
             logger.warning("incident patch after execute failed: %s", exc)
 
         return rec
+
+    @staticmethod
+    def _resource_key(rec: ActionRecord) -> Optional[str]:
+        mutating = {
+            ActionType.RESET_ERROR_RATE.value,
+            ActionType.RESET_LATENCY.value,
+            ActionType.RESTART_SERVICE.value,
+            ActionType.SCALE_DEPLOYMENT.value,
+        }
+        if rec.action_type not in mutating:
+            return None
+        target = (rec.target_service or "").strip().lower().replace("_", "-")
+        return f"service:{target}" if target else f"incident:{rec.incident_id}"
 
     def reject(self, action_id: str, *, executed_by: str, reason: str = "") -> ActionRecord:
         rec = self.repo.get(action_id)

@@ -31,10 +31,14 @@ def setup_otel(
         or os.getenv("SERVICE_NAME")
         or "unknown-service"
     )
-    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://lgtm:4318")
+    configured_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    endpoint = configured_endpoint or "http://lgtm:4318"
 
     try:
-        from opentelemetry import metrics, trace
+        from opentelemetry import _logs, metrics, trace
+        from opentelemetry.exporter.otlp.proto.http._log_exporter import (
+            OTLPLogExporter,
+        )
         from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
             OTLPMetricExporter,
         )
@@ -44,6 +48,8 @@ def setup_otel(
         from opentelemetry.sdk.metrics import MeterProvider
         from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
         from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
     except ImportError:
@@ -77,6 +83,33 @@ def setup_otel(
     )
     meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
     metrics.set_meter_provider(meter_provider)
+
+    # --- Logs ---
+    # LoggingInstrumentor only injects trace/span correlation fields; it does
+    # not ship records. Attach a real OTLP handler while preserving stdout.
+    # Keep it disabled for local library/test use unless an endpoint was
+    # explicitly configured; compose always supplies that endpoint.
+    logs_exporter = os.getenv(
+        "OTEL_LOGS_EXPORTER",
+        "otlp" if configured_endpoint else "none",
+    ).strip().lower()
+    root_logger = logging.getLogger()
+    if logs_exporter != "none" and not any(
+        getattr(handler, "_aiops_otel_exporter", False)
+        for handler in root_logger.handlers
+    ):
+        logger_provider = LoggerProvider(resource=resource)
+        log_exporter = OTLPLogExporter(endpoint=f"{endpoint.rstrip('/')}/v1/logs")
+        logger_provider.add_log_record_processor(
+            BatchLogRecordProcessor(log_exporter)
+        )
+        _logs.set_logger_provider(logger_provider)
+        otlp_handler = LoggingHandler(
+            level=logging.NOTSET,
+            logger_provider=logger_provider,
+        )
+        otlp_handler._aiops_otel_exporter = True  # type: ignore[attr-defined]
+        root_logger.addHandler(otlp_handler)
 
     # --- Auto-instrument FastAPI if app provided ---
     # Must run BEFORE the app starts serving (middleware registration).

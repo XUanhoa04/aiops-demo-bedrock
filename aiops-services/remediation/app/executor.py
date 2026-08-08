@@ -135,20 +135,88 @@ class ActionExecutor:
         if not payload:
             payload = {"error_rate": 0.01, "extra_latency_ms": 0}
 
-        rec.payload = payload
+        previous: dict[str, Any] = {}
+        try:
+            before = self._http.get(f"{base}/chaos")
+            if before.is_success:
+                previous = dict(before.json() or {})
+        except Exception as exc:
+            logger.warning(
+                "could not capture rollback state service=%s: %s",
+                rec.target_service,
+                exc,
+            )
+
+        rec.payload = {**payload, "_rollback_snapshot": previous}
         rec.command = f"POST {base}/chaos {json.dumps(payload)}"
         if settings.simulate_only:
             return self._simulate(rec, note="chaos reset simulated")
 
         resp = self._http.post(f"{base}/chaos", json=payload)
         rec.executed_at = utc_now()
-        if resp.is_success:
-            rec.status = ActionStatus.EXECUTED
-            rec.result = resp.text[:1000]
-        else:
+        if not resp.is_success:
             rec.status = ActionStatus.FAILED
             rec.result = f"HTTP {resp.status_code}: {resp.text[:500]}"
+            return rec
+
+        if not settings.verify_after_execute:
+            rec.status = ActionStatus.EXECUTED
+            rec.result = resp.text[:1000]
+            return rec
+
+        rec.verification = self._verify_chaos_state(base, payload)
+        if rec.verification.get("ok"):
+            rec.status = ActionStatus.EXECUTED
+            rec.result = "action applied and post-action verification passed"
+            return rec
+
+        rec.rollback = self._rollback_chaos_state(base, previous)
+        if rec.rollback.get("ok"):
+            rec.status = ActionStatus.ROLLED_BACK
+            rec.result = "post-action verification failed; previous state restored"
+        else:
+            rec.status = ActionStatus.FAILED
+            rec.result = "post-action verification failed and rollback did not complete"
         return rec
+
+    def _verify_chaos_state(
+        self, base: str, expected: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            health = self._http.get(f"{base}/health")
+            state = self._http.get(f"{base}/chaos")
+            actual = dict(state.json() or {}) if state.is_success else {}
+            mismatches = {
+                key: {"expected": value, "actual": actual.get(key)}
+                for key, value in expected.items()
+                if actual.get(key) != value
+            }
+            health_body = dict(health.json() or {}) if health.is_success else {}
+            health_ok = health.is_success and health_body.get("status") == "ok"
+            return {
+                "ok": health_ok and state.is_success and not mismatches,
+                "health_status": health.status_code,
+                "state_status": state.status_code,
+                "mismatches": mismatches,
+            }
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _rollback_chaos_state(
+        self, base: str, previous: dict[str, Any]
+    ) -> dict[str, Any]:
+        if not previous:
+            return {"ok": False, "error": "rollback snapshot unavailable"}
+        try:
+            response = self._http.post(f"{base}/chaos", json=previous)
+            return {
+                "ok": response.is_success,
+                "status_code": response.status_code,
+                "restored": previous if response.is_success else {},
+                "error": None if response.is_success else response.text[:500],
+            }
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     def _restart_service(self, rec: ActionRecord) -> ActionRecord:
         cname = self.container_name(rec.target_service)

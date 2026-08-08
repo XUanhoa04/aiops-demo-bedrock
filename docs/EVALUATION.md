@@ -24,8 +24,8 @@ bash scripts/wait_for_stack.sh
 python evaluation/evaluate_live_e2e.py --limit 10 --split core
 python evaluation/report_summary.py
 
-# Pure Loki path (no ticket fault seed)
-python evaluation/evaluate_live_e2e.py --limit 5 --no-seed-context
+# Live scoring always isolates ground truth from the incident/RCA payload
+python evaluation/evaluate_live_e2e.py --limit 5
 ```
 
 ## Scoring modes (RCA)
@@ -92,7 +92,7 @@ CI requires **beating weak**. Beating strong is reported and desirable, not alwa
 
 | Layer | Metric | Sample value | Interpretation |
 |-------|--------|--------------|----------------|
-| Anomaly **L0** (n≈28) | F1 / P / R | **0.97 / 0.94 / 1.00** | Clean synthetic — catalog-friendly |
+| Anomaly **L0** (n≈28) | F1 / P / R | **1.00 / 1.00 / 1.00** | Clean synthetic — catalog-friendly |
 | Anomaly **hard** (n≈16) | F1 / P / R | **0.89 / 0.80 / 1.00** | Noisy synthetic — CV-honest |
 | Anomaly overall (n≈44) | F1 | **0.96** | Production scoring path; no benchmark-only force |
 | RCA **core/holdout** (n≈42) | Acc (default) | **1.00** | Pattern-catalog regression |
@@ -102,6 +102,25 @@ CI requires **beating weak**. Beating strong is reported and desirable, not alwa
 | Baselines | System vs best weak / best strong | **0.92 > 0.21** / **0.92 > 0.81** | Beats weak + SRE log-bag |
 
 Live e2e depends on stack timing/Loki fill — report accuracy **and** evidence completeness; do not equate to offline YAML.
+
+Latest local live run (2026-08-08, four core scenarios, rule fallback):
+**2/4 default accuracy, 1/4 strict accuracy, 1.00 mean evidence
+completeness**. All three telemetry sources were present. The two later misses
+were retained in the result artifact: the 15-minute evidence/correlation
+window reused earlier same-service incidents and stale fault logs. This is an
+honest live limitation, not hidden with scenario-specific rules or seeded
+ticket text.
+
+The same run also verified detector checkpoint restore after a container
+restart (15 series / 58 feature rows), topology cascade grouping across
+checkout/payment, and service-level remediation lock plus post-action health
+verification.
+
+The current harness does **not** establish production false-positive rate,
+alert volume over quiet days, MTTA/MTTR improvement, or operator cognitive
+load. Those require a long-running shadow deployment with real cron/deploy/
+traffic seasonality and human-labelled incident outcomes. Do not derive those
+claims from the synthetic F1 tables above.
 
 ## What *not* to claim on a CV
 

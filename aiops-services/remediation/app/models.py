@@ -27,6 +27,7 @@ class ActionStatus(str, Enum):
     SKIPPED = "skipped"
     REJECTED = "rejected"
     SIMULATED = "simulated"
+    ROLLED_BACK = "rolled_back"
 
 
 class ActionType(str, Enum):
@@ -53,6 +54,8 @@ class ActionRecord(BaseModel):
     result: Optional[str] = None
     executed_by: Optional[str] = None
     command: Optional[str] = None  # docker/kubectl command that was (or would be) run
+    verification: dict[str, Any] = Field(default_factory=dict)
+    rollback: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     executed_at: Optional[datetime] = None

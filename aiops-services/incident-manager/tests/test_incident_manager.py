@@ -147,6 +147,90 @@ class TestHandleAnomaly(unittest.TestCase):
             # metrics recorded
             self.assertGreaterEqual(OPEN_INCIDENTS._value.get(), 1)
 
+    def test_topology_cascade_groups_connected_services(self) -> None:
+        from app.consumer import AnomalyConsumer
+
+        mock_redis = MagicMock()
+        mock_redis.ping.return_value = True
+        mock_redis.lpush.return_value = 1
+        mock_decision = MagicMock()
+        mock_decision.enabled = True
+        mock_decision.push.return_value = {"ok": True}
+        mock_rca = MagicMock()
+        mock_rca.enabled = False
+
+        with patch("app.consumer.get_redis", return_value=mock_redis):
+            consumer = AnomalyConsumer(
+                self.repo,
+                rca=mock_rca,
+                decision=mock_decision,
+            )
+            checkout = AnomalyEvent(
+                service_name="checkout-service",
+                metric_name="http_error_rate",
+                metric_value=0.45,
+                threshold=0.15,
+                severity=AnomalySeverity.HIGH,
+                message="checkout is failing",
+            )
+            payment = AnomalyEvent(
+                service_name="payment-service",
+                metric_name="http_5xx_rate",
+                metric_value=0.70,
+                threshold=0.15,
+                severity=AnomalySeverity.CRITICAL,
+                message="payment dependency is failing",
+            )
+
+            first = consumer.handle_anomaly(checkout, source="webhook")
+            grouped = consumer.handle_anomaly(payment, source="redis")
+
+            self.assertEqual(grouped.id, first.id)
+            self.assertEqual(self.repo.count_open(), 1)
+            self.assertEqual(
+                set(grouped.context["affected_services"]),
+                {"checkout-service", "payment-service"},
+            )
+            self.assertEqual(
+                grouped.context["correlation"]["kind"], "topology_cascade"
+            )
+            self.assertEqual(
+                grouped.context["suspected_root_service"], "payment-service"
+            )
+            # Initial incident + one meaningful cascade refresh.
+            self.assertEqual(mock_decision.push.call_count, 2)
+
+    def test_topology_correlation_does_not_mix_metric_families(self) -> None:
+        from app.consumer import AnomalyConsumer
+
+        mock_redis = MagicMock()
+        mock_decision = MagicMock()
+        mock_decision.enabled = True
+        mock_decision.push.return_value = {"ok": True}
+        mock_rca = MagicMock()
+        mock_rca.enabled = False
+        with patch("app.consumer.get_redis", return_value=mock_redis):
+            consumer = AnomalyConsumer(
+                self.repo, rca=mock_rca, decision=mock_decision
+            )
+            first = AnomalyEvent(
+                service_name="checkout-service",
+                metric_name="http_error_rate",
+                metric_value=0.4,
+                threshold=0.15,
+                message="errors",
+            )
+            second = AnomalyEvent(
+                service_name="payment-service",
+                metric_name="cpu_usage",
+                metric_value=0.9,
+                threshold=0.8,
+                message="cpu",
+            )
+            consumer.handle_anomaly(first, source="webhook")
+            consumer.handle_anomaly(second, source="webhook")
+            self.assertEqual(self.repo.count_open(), 2)
+
     def test_single_control_plane_no_direct_rca_when_decision_ok(self) -> None:
         """Decision Engine is primary; direct RCA stays off by default."""
         from app.consumer import AnomalyConsumer

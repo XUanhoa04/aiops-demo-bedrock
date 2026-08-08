@@ -23,8 +23,9 @@ Methods
 4. **IsolationForest (sklearn)**
    Multivariate view over [request_rate, error_rate, latency]. Captures joint
    outliers (rate↓ + latency↑) that univariate rules miss.
-   Why contamination≈0.08: demo traffic is mostly healthy; too high → alert
-   fatigue, too low → miss chaos injections.
+   Default contamination="auto" avoids encoding an uncalibrated fixed anomaly
+   fraction. A numeric value remains available for deployments calibrated from
+   labelled shadow traffic.
 
 5. **Absolute thresholds** (cold-start safety net)
    error_rate / latency p95 hard caps so the first 8 samples still protect SLOs.
@@ -43,6 +44,7 @@ Each MethodResult carries:
 from __future__ import annotations
 
 import logging
+import math
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Deque, Optional
@@ -185,6 +187,99 @@ class HybridDetector:
         )
         self._iforest: dict[str, IsolationForest] = {}
         self._iforest_trained_n: dict[str, int] = {}
+
+    def snapshot(self) -> dict:
+        """Return a JSON-safe checkpoint of learned baselines.
+
+        IsolationForest estimators are intentionally not serialized. Their
+        bounded feature history is persisted and the model is retrained on the
+        next evaluation, avoiding unsafe/version-sensitive pickle payloads.
+        """
+        return {
+            "schema_version": 1,
+            "series": {
+                key: {
+                    "values": list(state.values),
+                    "ewma": state.ewma,
+                    "ewma_var": state.ewma_var,
+                    "alpha": state.alpha,
+                }
+                for key, state in self._series.items()
+            },
+            "feature_history": {
+                service: list(history)
+                for service, history in self._feature_hist.items()
+            },
+        }
+
+    def restore(self, payload: dict) -> dict[str, int]:
+        """Restore a checkpoint defensively and return restored item counts."""
+        if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+            raise ValueError("unsupported detector checkpoint schema")
+
+        restored_series = 0
+        restored_features = 0
+        new_series: dict[str, SeriesState] = {}
+        for key, raw in (payload.get("series") or {}).items():
+            if not isinstance(key, str) or not isinstance(raw, dict):
+                continue
+            values = self._finite_values(raw.get("values"), settings.window_size)
+            if not values:
+                continue
+            state = SeriesState(settings.window_size, settings.ewma_alpha)
+            state.values.extend(values)
+            ewma = raw.get("ewma")
+            ewma_var = raw.get("ewma_var")
+            state.ewma = float(ewma) if self._is_finite_number(ewma) else values[-1]
+            state.ewma_var = (
+                max(0.0, float(ewma_var))
+                if self._is_finite_number(ewma_var)
+                else 0.0
+            )
+            new_series[key] = state
+            restored_series += 1
+
+        new_features: dict[str, Deque[list[float]]] = {}
+        for service, rows in (payload.get("feature_history") or {}).items():
+            if not isinstance(service, str) or not isinstance(rows, list):
+                continue
+            history: Deque[list[float]] = deque(maxlen=settings.window_size)
+            for row in rows[-settings.window_size :]:
+                clean = self._finite_values(row, 3)
+                if len(clean) == 3:
+                    history.append(clean)
+                    restored_features += 1
+            if history:
+                new_features[service] = history
+
+        self._series = defaultdict(
+            lambda: SeriesState(settings.window_size, settings.ewma_alpha),
+            new_series,
+        )
+        self._feature_hist = defaultdict(
+            lambda: deque(maxlen=settings.window_size),
+            new_features,
+        )
+        self._iforest.clear()
+        self._iforest_trained_n.clear()
+        return {"series": restored_series, "feature_rows": restored_features}
+
+    @staticmethod
+    def _is_finite_number(value: object) -> bool:
+        try:
+            return math.isfinite(float(value))
+        except (TypeError, ValueError):
+            return False
+
+    @classmethod
+    def _finite_values(cls, values: object, limit: int) -> list[float]:
+        if not isinstance(values, (list, tuple)):
+            return []
+        return [
+            float(value)
+            for value in values[-limit:]
+            if cls._is_finite_number(value)
+        ]
 
     def evaluate_service(
         self,
@@ -488,9 +583,10 @@ class HybridDetector:
         method: Optional[MethodResult] = None
         if len(hist) >= settings.min_samples:
             X = np.asarray(list(hist), dtype=float)
+            contamination = settings.iforest_contamination_value
             model = IsolationForest(
                 n_estimators=settings.iforest_n_estimators,
-                contamination=settings.iforest_contamination,
+                contamination=contamination,
                 random_state=42,
                 n_jobs=1,
             )
@@ -498,28 +594,50 @@ class HybridDetector:
                 model.fit(X)
                 self._iforest[service] = model
                 self._iforest_trained_n[service] = len(hist)
-                # decision_function: higher = more normal; invert → anomaly score
+                # score_samples is independent from sklearn's contamination
+                # offset. Gate the boundary with a robust historical z-score so
+                # no fixed fraction of observations is assumed anomalous.
                 raw = float(model.decision_function([vec])[0])
                 pred = int(model.predict([vec])[0])  # -1 anomaly, 1 normal
-                score = max(0.0, -raw * 5.0)  # scale for Grafana readability
+                train_scores = np.asarray(model.score_samples(X), dtype=float)
+                candidate_score = float(model.score_samples([vec])[0])
+                score_median = float(np.median(train_scores))
+                mad = float(np.median(np.abs(train_scores - score_median)))
+                robust_sigma = max(1.4826 * mad, 1e-6)
+                robust_z = max(0.0, (score_median - candidate_score) / robust_sigma)
+                is_outlier = (
+                    pred == -1
+                    and robust_z >= settings.iforest_robust_z_threshold
+                )
+                score = robust_z
                 feat_summary = ", ".join(
                     f"{k}={v:.4g}" for k, v in zip(feature_names, vec)
+                )
+                explanation = (
+                    f"IsolationForest flagged multivariate outlier on {service} "
+                    f"(robust_z={score:.3f}, n={len(hist)}, "
+                    f"features=[{feat_summary}]) — joint shape khác baseline, "
+                    f"không chỉ 1 metric đơn lẻ"
+                    if is_outlier
+                    else f"IsolationForest joint shape for {service} is within "
+                    f"the robust historical gate (robust_z={score:.3f}, "
+                    f"threshold={settings.iforest_robust_z_threshold})"
                 )
                 method = MethodResult(
                     method="isolation_forest",
                     score=score,
-                    is_anomaly=(pred == -1),
+                    is_anomaly=is_outlier,
                     detail={
                         "decision_function": raw,
+                        "candidate_score": candidate_score,
+                        "historical_score_median": score_median,
+                        "historical_score_mad": mad,
+                        "robust_z": robust_z,
+                        "robust_z_threshold": settings.iforest_robust_z_threshold,
                         "n_samples": len(hist),
                         "features": feature_names,
-                        "contamination": settings.iforest_contamination,
-                        "explanation": (
-                            f"IsolationForest flagged multivariate outlier on "
-                            f"{service} (score={score:.3f}, n={len(hist)}, "
-                            f"features=[{feat_summary}]) — joint shape khác "
-                            f"baseline, không chỉ 1 metric đơn lẻ"
-                        ),
+                        "contamination": contamination,
+                        "explanation": explanation,
                     },
                 )
             except Exception as exc:

@@ -26,6 +26,7 @@ from app.prom_metrics import (
     set_score,
 )
 from app.prometheus_client import PrometheusClient
+from app.state_store import DetectorStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,8 @@ class DetectorWorker:
         self.prom = PrometheusClient()
         self.decisions = DecisionBuilder()
         self.notifier = Notifier()
+        self.state_store = DetectorStateStore()
+        self._state_restored = False
         self._task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
         self.recent_anomalies: list[AnomalyEvent] = []
@@ -47,6 +50,9 @@ class DetectorWorker:
 
     async def start(self) -> None:
         self._stop.clear()
+        self._state_restored = await asyncio.to_thread(
+            self.state_store.restore_into, self.engine
+        )
         self._task = asyncio.create_task(self._run(), name="hybrid-anomaly-poller")
         logger.info(
             "hybrid detector started interval=%ss zscore_threshold=%.2f "
@@ -69,6 +75,7 @@ class DetectorWorker:
         self._stop.set()
         if self._task:
             await asyncio.wait([self._task], timeout=15)
+        await asyncio.to_thread(self.state_store.save, self.engine)
         self.prom.close()
         self.decisions.close()
         self.notifier.close()
@@ -101,6 +108,7 @@ class DetectorWorker:
             except Exception as exc:
                 ERRORS_TOTAL.labels(stage="evaluate").inc()
                 logger.exception("evaluate failed service=%s err=%s", svc, exc)
+        self.state_store.save(self.engine)
 
     def _evaluate_service(self, service: str) -> None:
         features = self.prom.scrape_service(service)
@@ -228,6 +236,12 @@ class DetectorWorker:
             "ewma_alpha": settings.ewma_alpha,
             "hybrid_vote": settings.hybrid_vote,
             "window_size": settings.window_size,
+            "state_persistence": {
+                "enabled": settings.enable_state_persistence,
+                "restored": self._state_restored,
+                "restore_counts": self.state_store.last_restore_counts,
+                "last_error": self.state_store.last_error,
+            },
             "enable_stl": settings.enable_stl,
             "enable_context_gather": settings.enable_context_gather,
             "confidence_weights": {

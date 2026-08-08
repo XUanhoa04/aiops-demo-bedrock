@@ -69,7 +69,7 @@ Optional:
 # Live stack RCA
 python evaluation/evaluate_live_e2e.py --limit 10 --split core
 # Pure observability (no fault seed on ticket)
-python evaluation/evaluate_live_e2e.py --limit 5 --no-seed-context
+python evaluation/evaluate_live_e2e.py --limit 5
 ```
 
 ## Metrics definitions

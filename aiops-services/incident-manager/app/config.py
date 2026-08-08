@@ -26,6 +26,11 @@ class Settings(BaseSettings):
 
     # Correlation window: same service + metric within N minutes → one incident
     correlation_window_minutes: int = 10
+    # Also group a matching symptom from a directly connected service into the
+    # same incident. Runtime trace-derived topology remains available to RCA;
+    # this consumer uses the configured catalog for deterministic grouping.
+    enable_topology_correlation: bool = True
+    topology_path: str = ""
 
     # RCA Engine URL (manual analyze + legacy fan-out). Empty = disabled.
     # Env: RCA_ENGINE_URL  e.g. http://aiops-rca-engine:8003

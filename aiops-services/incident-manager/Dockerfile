@@ -18,6 +18,7 @@ COPY shared/requirements-base.txt /app/shared/requirements-base.txt
 COPY shared/aiops_shared /app/aiops_shared
 COPY aiops-services/incident-manager/requirements.txt /app/requirements.txt
 COPY aiops-services/incident-manager/app /app/app
+COPY config /app/config
 
 RUN pip install --upgrade pip \
     && pip install -r /app/shared/requirements-base.txt \

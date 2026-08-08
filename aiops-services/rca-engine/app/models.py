@@ -109,7 +109,7 @@ class EvidencePack(BaseModel):
     change_events: list[dict[str, Any]] = Field(default_factory=list)
 
     def to_prompt_block(self, max_chars: int = 14000) -> str:
-        """Compact, LLM-friendly dump of only grounded facts (incl. topology)."""
+        """Return bounded, valid JSON while preserving highest-priority evidence."""
         import json
 
         payload = {
@@ -154,10 +154,69 @@ class EvidencePack(BaseModel):
                 "prefer that dependency as root_cause — the ticket service may be a symptom."
             ),
         }
-        text = json.dumps(payload, indent=2, default=str)
-        if len(text) > max_chars:
-            return text[: max_chars - 20] + "\n…[truncated]"
-        return text
+        evidence_keys = (
+            "error_logs",
+            "neighbor_logs",
+            "traces",
+            "neighbor_traces",
+            "change_events",
+        )
+        original_counts = {key: len(payload[key]) for key in evidence_keys}
+
+        def encode(value: dict[str, Any]) -> str:
+            return json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            )
+
+        text = encode(payload)
+        if len(text) <= max_chars:
+            return text
+
+        payload["evidence_budget"] = {
+            "truncated": True,
+            "max_chars": max_chars,
+            "original_counts": original_counts,
+        }
+        # Lists are ordered with the most relevant/latest evidence first. Drop
+        # only tail records, choosing the currently largest list each round.
+        while len(text := encode(payload)) > max_chars:
+            candidates = [key for key in evidence_keys if payload[key]]
+            if not candidates:
+                break
+            largest = max(candidates, key=lambda key: len(encode({key: payload[key]})))
+            payload[largest].pop()
+
+        payload["evidence_budget"]["included_counts"] = {
+            key: len(payload[key]) for key in evidence_keys
+        }
+        text = encode(payload)
+        if len(text) <= max_chars:
+            return text
+
+        # Oversized scalar maps must not produce invalid, mid-object JSON.
+        minimal = {
+            "incident": {
+                "id": payload["incident"].get("id"),
+                "service_name": self.service_name,
+                "metric_name": payload["incident"].get("metric_name"),
+                "metric_value": payload["incident"].get("metric_value"),
+                "threshold": payload["incident"].get("threshold"),
+                "description": str(payload["incident"].get("description") or "")[:300],
+            },
+            "time_window": payload["time_window"],
+            "primary_trace_id_hint": self.primary_trace_id,
+            "sources_ok": self.sources_ok,
+            "gather_errors": self.gather_errors[:3],
+            "evidence_budget": payload["evidence_budget"],
+        }
+        text = encode(minimal)
+        if len(text) <= max_chars:
+            return text
+        fallback = encode({"evidence_budget": {"truncated": True}})
+        return fallback if len(fallback) <= max_chars else "{}"
 
 
 class AnalyzeResponse(BaseModel):

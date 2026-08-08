@@ -324,6 +324,30 @@ class IncidentRepository:
             ).fetchone()
         return self._row_to_incident(row) if row else None
 
+    def find_open_for_services(
+        self,
+        service_names: list[str],
+        window_minutes: int,
+    ) -> list[Incident]:
+        """Return recent open incidents for topology-correlation candidates."""
+        names = sorted({name for name in service_names if name})
+        if not names:
+            return []
+        placeholders = ",".join("?" for _ in names)
+        sql = f"""
+            SELECT * FROM incidents
+            WHERE service_name IN ({placeholders})
+              AND status IN ('open', 'acknowledged', 'investigating', 'remediating')
+              AND datetime(created_at) >= datetime('now', ?)
+            ORDER BY created_at DESC
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                sql,
+                [*names, f"-{window_minutes} minutes"],
+            ).fetchall()
+        return [self._row_to_incident(row) for row in rows]
+
     def count_by_status(self) -> dict[str, int]:
         with self._conn() as conn:
             rows = conn.execute(

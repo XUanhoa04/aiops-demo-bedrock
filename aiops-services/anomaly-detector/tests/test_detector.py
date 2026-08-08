@@ -82,3 +82,91 @@ def test_isolation_forest_warms_up():
     mv = [r for r in last if r.metric.startswith("multivariate:")]
     # May or may not be anomaly depending on contamination; method must be present after min_samples
     assert mv, "expected multivariate IsolationForest result after warm-up"
+
+
+def test_checkpoint_restore_preserves_baselines_and_feature_history():
+    original = HybridDetector()
+    for i in range(settings.min_samples + 2):
+        original.evaluate_service(
+            "checkout-service",
+            {
+                "http_error_rate": 0.01 + i / 10000,
+                "http_request_rate": 10.0 + i / 100,
+                "http_latency_p95_seconds": 0.05,
+            },
+        )
+
+    checkpoint = original.snapshot()
+    restored = HybridDetector()
+    counts = restored.restore(checkpoint)
+
+    assert counts["series"] == 3
+    assert counts["feature_rows"] == settings.min_samples + 2
+    state = restored._series["checkout-service:http_error_rate"]
+    assert len(state.values) == settings.min_samples + 2
+    assert state.ewma is not None
+
+    results = restored.evaluate_service(
+        "checkout-service",
+        {
+            "http_error_rate": 0.8,
+            "http_request_rate": 10.0,
+            "http_latency_p95_seconds": 0.05,
+        },
+    )
+    err = next(r for r in results if r.metric == "http_error_rate")
+    assert any(m.method == "zscore" for m in err.methods)
+    assert any(r.metric.startswith("multivariate:") for r in results)
+
+
+def test_checkpoint_rejects_unknown_schema():
+    det = HybridDetector()
+    try:
+        det.restore({"schema_version": 999})
+    except ValueError as exc:
+        assert "schema" in str(exc)
+    else:
+        raise AssertionError("unknown checkpoint schema must be rejected")
+
+
+def test_iforest_contamination_defaults_to_auto():
+    previous = settings.iforest_contamination
+    try:
+        settings.iforest_contamination = "auto"
+        assert settings.iforest_contamination_value == "auto"
+        settings.iforest_contamination = "0.08"
+        assert settings.iforest_contamination_value == 0.08
+    finally:
+        settings.iforest_contamination = previous
+
+
+def test_state_store_round_trip_restores_checkpoint():
+    from app.state_store import DetectorStateStore
+
+    class FakeRedis:
+        value = None
+
+        def set(self, key, value):
+            self.value = value
+            return True
+
+        def get(self, key):
+            return self.value
+
+    original = HybridDetector()
+    for _ in range(settings.min_samples):
+        original.evaluate_service(
+            "svc-persist",
+            {
+                "http_error_rate": 0.01,
+                "http_request_rate": 5.0,
+                "http_latency_p95_seconds": 0.1,
+            },
+        )
+    redis = FakeRedis()
+    store = DetectorStateStore(redis_client=redis)
+    assert store.save(original)
+
+    restored = HybridDetector()
+    assert store.restore_into(restored)
+    assert len(restored._series["svc-persist:http_error_rate"].values) == settings.min_samples
