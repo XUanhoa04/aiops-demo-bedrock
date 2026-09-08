@@ -65,10 +65,26 @@ def _init_metrics() -> None:
         pass
 
 
+_http_client: httpx.AsyncClient | None = None
+
+
+def get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=3.0),
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+        )
+    return _http_client
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _init_metrics()
+    client = get_http_client()
     yield
+    if client and not client.is_closed:
+        await client.aclose()
 
 
 app = FastAPI(title="Payment Service", version="0.1.0", lifespan=lifespan)
@@ -132,32 +148,32 @@ async def pay(body: PayRequest) -> dict:
 
     # Upstream fraud score (topology: payment → fraud)
     fraud_body: dict[str, Any] = {}
+    client = get_http_client()
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            fr = await client.post(
-                f"{FRAUD_URL.rstrip('/')}/score",
-                json={
-                    "order_id": body.order_id,
-                    "amount": body.amount,
-                    "currency": body.currency,
-                },
+        fr = await client.post(
+            f"{FRAUD_URL.rstrip('/')}/score",
+            json={
+                "order_id": body.order_id,
+                "amount": body.amount,
+                "currency": body.currency,
+            },
+        )
+        if not fr.is_success:
+            elapsed = (time.perf_counter() - start) * 1000
+            req_counter.add(1, {**attrs, "status": "error"})
+            err_counter.add(1, {**attrs, "reason": "fraud"})
+            duration_hist.record(elapsed, {**attrs, "status": "error"})
+            detail = fr.text[:200] if fr.text else f"status={fr.status_code}"
+            logger.error(
+                "payment blocked: fraud dependency unhealthy order_id=%s detail=%s",
+                body.order_id,
+                detail,
             )
-            if not fr.is_success:
-                elapsed = (time.perf_counter() - start) * 1000
-                req_counter.add(1, {**attrs, "status": "error"})
-                err_counter.add(1, {**attrs, "reason": "fraud"})
-                duration_hist.record(elapsed, {**attrs, "status": "error"})
-                detail = fr.text[:200] if fr.text else f"status={fr.status_code}"
-                logger.error(
-                    "payment blocked: fraud dependency unhealthy order_id=%s detail=%s",
-                    body.order_id,
-                    detail,
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"fraud dependency unhealthy: {detail}",
-                )
-            fraud_body = fr.json()
+            raise HTTPException(
+                status_code=502,
+                detail=f"fraud dependency unhealthy: {detail}",
+            )
+        fraud_body = fr.json()
     except HTTPException:
         raise
     except Exception as exc:

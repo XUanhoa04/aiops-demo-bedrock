@@ -78,3 +78,45 @@ def test_topology_catalog_four_services():
     assert "checkout-service" in pay.downstream
     inv = cat.neighborhood("inventory-service")
     assert "checkout-service" in inv.downstream
+
+
+def test_checkout_and_payment_persistent_client_reuse():
+    # Checkout service persistent client
+    _, chk_mod = _client("app.main", ROOT / "apps" / "checkout-service")
+    c1 = chk_mod.get_http_client()
+    c2 = chk_mod.get_http_client()
+    assert c1 is c2
+    assert not c1.is_closed
+
+    # Payment service persistent client
+    _, pay_mod = _client("app.main", ROOT / "apps" / "payment-service")
+    p1 = pay_mod.get_http_client()
+    p2 = pay_mod.get_http_client()
+    assert p1 is p2
+    assert not p1.is_closed
+
+
+def test_checkout_e2e_with_downstream_hops():
+    client, chk_mod = _client("app.main", ROOT / "apps" / "checkout-service")
+    client.post("/chaos", json={"error_rate": 0.0, "extra_latency_ms": 0})
+
+    mock_client = AsyncMock()
+    mock_inv_resp = MagicMock()
+    mock_inv_resp.is_success = True
+    mock_inv_resp.json.return_value = {"status": "reserved", "sku": "SKU-DEMO"}
+    mock_pay_resp = MagicMock()
+    mock_pay_resp.is_success = True
+    mock_pay_resp.json.return_value = {"status": "captured", "payment_id": "p-123"}
+
+    mock_client.post.side_effect = [mock_inv_resp, mock_pay_resp]
+
+    with patch.object(chk_mod, "get_http_client", return_value=mock_client):
+        r = client.post("/checkout", json={"order_id": "test-order-99", "amount": 99.0})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["order_id"] == "test-order-99"
+        assert data["status"] == "confirmed"
+        assert data["inventory"]["sku"] == "SKU-DEMO"
+        assert data["payment"]["payment_id"] == "p-123"
+        assert mock_client.post.call_count == 2
+
