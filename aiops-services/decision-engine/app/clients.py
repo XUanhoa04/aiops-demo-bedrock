@@ -127,7 +127,12 @@ class ServiceClients:
             "auto_execute_low_risk": auto_execute_low_risk,
         }
         try:
-            r = self._http.post(url, json=payload)
+            headers = (
+                {"X-API-Key": settings.remediation_api_key}
+                if settings.remediation_api_key
+                else None
+            )
+            r = self._http.post(url, json=payload, headers=headers)
             if r.status_code >= 400:
                 logger.error("remediate/propose HTTP %s: %s", r.status_code, r.text[:300])
                 return None

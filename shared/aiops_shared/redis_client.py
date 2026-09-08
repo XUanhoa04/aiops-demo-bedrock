@@ -63,11 +63,20 @@ def reserve(
 ) -> Optional[str]:
     """Atomically move one item to an in-flight list before processing.
 
-    Unlike ``BRPOP``, ``BRPOPLPUSH`` keeps the payload recoverable if the
-    worker exits between receipt and persistence. Call :func:`acknowledge`
-    only after all side effects for the item have completed.
+    Unlike ``BRPOP``, this keeps the payload recoverable if the worker exits
+    between receipt and persistence. Uses ``BLMOVE`` (Redis 6.2+) with graceful
+    fallback to ``BRPOPLPUSH`` for older Redis engines and mocks.
+    Call :func:`acknowledge` only after all side effects have completed.
     """
-    payload = client.brpoplpush(queue, processing_queue, timeout=timeout_sec)
+    try:
+        if hasattr(client, "blmove"):
+            payload = client.blmove(
+                queue, processing_queue, timeout=timeout_sec, wherefrom="RIGHT", whereto="LEFT"
+            )
+        else:
+            payload = client.brpoplpush(queue, processing_queue, timeout=timeout_sec)
+    except (redis.ResponseError, redis.RedisError, AttributeError):
+        payload = client.brpoplpush(queue, processing_queue, timeout=timeout_sec)
     return str(payload) if payload is not None else None
 
 
@@ -126,7 +135,15 @@ def recover_inflight(
     """Return reservations left by a previous worker process to the source."""
     recovered = 0
     for _ in range(max(0, limit)):
-        payload = client.rpoplpush(processing_queue, queue)
+        try:
+            if hasattr(client, "lmove"):
+                payload = client.lmove(
+                    processing_queue, queue, wherefrom="RIGHT", whereto="LEFT"
+                )
+            else:
+                payload = client.rpoplpush(processing_queue, queue)
+        except (redis.ResponseError, redis.RedisError, AttributeError):
+            payload = client.rpoplpush(processing_queue, queue)
         if payload is None:
             break
         recovered += 1
