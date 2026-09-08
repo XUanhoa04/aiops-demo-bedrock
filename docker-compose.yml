@@ -433,6 +433,8 @@ services:
       REMEDIATION_API_URL: http://127.0.0.1:8004
       CHECKOUT_URL: ${CHECKOUT_URL:-http://checkout-service:8080}
       PAYMENT_URL: ${PAYMENT_URL:-http://payment-service:8081}
+      INVENTORY_URL: ${INVENTORY_URL:-http://inventory-service:8082}
+      FRAUD_URL: ${FRAUD_URL:-http://fraud-service:8083}
       INCIDENT_MANAGER_URL: ${INCIDENT_MANAGER_URL:-http://aiops-incident-manager:8002}
       RCA_ENGINE_URL: ${RCA_ENGINE_URL:-http://aiops-rca-engine:8003}
       REMEDIATION_DB_PATH: ${REMEDIATION_DB_PATH:-/data/remediation.db}

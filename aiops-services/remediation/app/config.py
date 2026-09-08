@@ -18,6 +18,8 @@ class Settings(BaseSettings):
 
     checkout_url: str = "http://checkout-service:8080"
     payment_url: str = "http://payment-service:8081"
+    inventory_url: str = "http://inventory-service:8082"
+    fraud_url: str = "http://fraud-service:8083"
 
     # SQLite action history (volume-mounted in compose)
     remediation_db_path: str = "/data/remediation.db"

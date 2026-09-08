@@ -70,9 +70,15 @@ class ActionExecutor:
                 pass
 
     def service_base_url(self, service: str) -> str:
-        s = (service or "").lower()
+        s = (service or "").lower().replace("_", "-")
         if "payment" in s:
             return settings.payment_url.rstrip("/")
+        if "inventory" in s:
+            return settings.inventory_url.rstrip("/")
+        if "fraud" in s:
+            return settings.fraud_url.rstrip("/")
+        if "checkout" not in s:
+            logger.warning("unknown target service '%s' — defaulting to checkout_url", service)
         return settings.checkout_url.rstrip("/")
 
     def container_name(self, service: str) -> str:
