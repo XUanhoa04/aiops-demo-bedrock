@@ -39,25 +39,48 @@ _FAULT_MESSAGES = {
 }
 
 
+def _get_meter():
+    try:
+        from opentelemetry import metrics
+
+        return metrics.get_meter(SERVICE_NAME)
+    except Exception:
+        return None
+
+
 class _Noop:
     def add(self, *a, **k): ...
     def record(self, *a, **k): ...
+    def set(self, *a, **k): ...
 
 
+meter = None
 req_counter = _Noop()
 err_counter = _Noop()
 duration_hist = _Noop()
 
 
 def _init_metrics() -> None:
-    global req_counter, err_counter, duration_hist
+    global meter, req_counter, err_counter, duration_hist
+    meter = _get_meter()
+    if meter is None:
+        return
     try:
-        from opentelemetry import metrics
-
-        meter = metrics.get_meter(SERVICE_NAME)
-        req_counter = meter.create_counter("demo_http_requests_total", unit="1")
-        err_counter = meter.create_counter("demo_http_errors_total", unit="1")
-        duration_hist = meter.create_histogram("demo_http_duration_ms", unit="ms")
+        req_counter = meter.create_counter(
+            "demo_http_requests_total",
+            description="Inventory requests",
+            unit="1",
+        )
+        err_counter = meter.create_counter(
+            "demo_http_errors_total",
+            description="Inventory errors",
+            unit="1",
+        )
+        duration_hist = meter.create_histogram(
+            "demo_http_duration_ms",
+            description="Inventory request duration",
+            unit="ms",
+        )
     except Exception:
         pass
 

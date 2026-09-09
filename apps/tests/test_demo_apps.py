@@ -120,3 +120,41 @@ def test_checkout_e2e_with_downstream_hops():
         assert data["payment"]["payment_id"] == "p-123"
         assert mock_client.post.call_count == 2
 
+
+def test_inventory_and_fraud_telemetry_fallbacks():
+    _, inv_mod = _client("app.main", ROOT / "apps" / "inventory-service")
+    noop = inv_mod._Noop()
+    # Ensure all telemetry methods on fallback are safe no-ops
+    noop.add(1, {"route": "/reserve"})
+    noop.record(45.0, {"route": "/reserve"})
+    noop.set(10)
+
+    # Test with mocked meter
+    mock_meter = MagicMock()
+    with patch.object(inv_mod, "_get_meter", return_value=mock_meter):
+        inv_mod._init_metrics()
+        mock_meter.create_counter.assert_any_call(
+            "demo_http_requests_total",
+            description="Inventory requests",
+            unit="1",
+        )
+        mock_meter.create_histogram.assert_called_once_with(
+            "demo_http_duration_ms",
+            description="Inventory request duration",
+            unit="ms",
+        )
+
+    _, fraud_mod = _client("app.main", ROOT / "apps" / "fraud-service")
+    with patch.object(fraud_mod, "_get_meter", return_value=mock_meter):
+        fraud_mod._init_metrics()
+        mock_meter.create_counter.assert_any_call(
+            "demo_http_requests_total",
+            description="Fraud requests",
+            unit="1",
+        )
+        mock_meter.create_histogram.assert_called_with(
+            "demo_http_duration_ms",
+            description="Fraud request duration",
+            unit="ms",
+        )
+
