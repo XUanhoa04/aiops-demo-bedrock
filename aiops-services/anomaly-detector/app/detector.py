@@ -195,19 +195,31 @@ class HybridDetector:
         bounded feature history is persisted and the model is retrained on the
         next evaluation, avoiding unsafe/version-sensitive pickle payloads.
         """
+        def _safe_float(v: Any) -> Optional[float]:
+            if v is None:
+                return None
+            try:
+                fv = float(v)
+                return fv if np.isfinite(fv) else None
+            except (ValueError, TypeError):
+                return None
+
         return {
             "schema_version": 1,
             "series": {
                 key: {
-                    "values": list(state.values),
-                    "ewma": state.ewma,
-                    "ewma_var": state.ewma_var,
-                    "alpha": state.alpha,
+                    "values": [float(x) for x in state.values if np.isfinite(x)],
+                    "ewma": _safe_float(state.ewma),
+                    "ewma_var": _safe_float(state.ewma_var),
+                    "alpha": _safe_float(state.alpha),
                 }
                 for key, state in self._series.items()
             },
             "feature_history": {
-                service: list(history)
+                service: [
+                    [float(x) for x in row if np.isfinite(x)]
+                    for row in history
+                ]
                 for service, history in self._feature_hist.items()
             },
         }

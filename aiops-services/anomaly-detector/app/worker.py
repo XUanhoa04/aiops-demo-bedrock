@@ -195,6 +195,9 @@ class DetectorWorker:
             logger.debug("cooldown active key=%s", key)
             return
         self._last_fired[key] = now
+        if len(self._last_fired) > 100:
+            cutoff = now - (settings.alert_cooldown_sec * 2)
+            self._last_fired = {k: v for k, v in self._last_fired.items() if v >= cutoff}
         event = self.decisions.to_anomaly_event(decision)
         event = self.notifier.publish_decision(decision, event)
         self.recent_anomalies.insert(0, event)

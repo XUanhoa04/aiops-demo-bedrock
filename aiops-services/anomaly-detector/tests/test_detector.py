@@ -170,3 +170,84 @@ def test_state_store_round_trip_restores_checkpoint():
     restored = HybridDetector()
     assert store.restore_into(restored)
     assert len(restored._series["svc-persist:http_error_rate"].values) == settings.min_samples
+
+
+def test_snapshot_handles_nan_and_inf_safely():
+    import json
+    import math
+
+    det = HybridDetector()
+    det.evaluate_service(
+        "svc-nan",
+        {
+            "http_error_rate": 0.05,
+            "http_request_rate": 10.0,
+            "http_latency_p95_seconds": 0.02,
+        },
+    )
+    # Force non-finite values into series state
+    state = det._series["svc-nan:http_error_rate"]
+    state.ewma = float("nan")
+    state.ewma_var = float("inf")
+
+    snap = det.snapshot()
+    # json.dumps with allow_nan=False must not raise ValueError
+    serialized = json.dumps(snap, allow_nan=False)
+    assert serialized is not None
+
+    restored = HybridDetector()
+    counts = restored.restore(json.loads(serialized))
+    assert counts["series"] == 3
+    restored_state = restored._series["svc-nan:http_error_rate"]
+    # Non-finite EWMA must have fallen back to last finite sample value safely
+    assert math.isfinite(restored_state.ewma)
+    assert restored_state.ewma == 0.05
+
+
+def test_alert_cooldown_eviction():
+    import time
+    from unittest.mock import MagicMock
+    from app.worker import DetectorWorker
+    from app.detector import HybridResult
+    from app.models import DetectionDecision
+
+    worker = DetectorWorker()
+    worker.notifier = MagicMock()
+    worker.decisions = MagicMock()
+
+    res = HybridResult(
+        service="checkout-service",
+        metric="http_error_rate",
+        value=0.5,
+        is_anomaly=True,
+        anomaly_score=3.5,
+        methods=[],
+        features={},
+        winning_methods=["zscore"],
+    )
+    decision = DetectionDecision(
+        service_name="checkout-service",
+        metric_name="http_error_rate",
+        metric_value=0.5,
+        is_anomaly=True,
+        anomaly_score=3.5,
+        detection_method="zscore",
+        confidence_score=90.0,
+        explanation="Test anomaly",
+        signals={},
+        detection_methods=["zscore"],
+        missing_context=[],
+        context_completeness=1.0,
+    )
+
+    # Seed 105 old entries in _last_fired
+    now = time.time()
+    old_ts = now - (settings.alert_cooldown_sec * 3)
+    for i in range(105):
+        worker._last_fired[f"svc-{i}:metric"] = old_ts
+
+    # Trigger notify
+    worker._maybe_notify(res, decision)
+    # Old entries should be evicted, leaving only recent ones
+    assert len(worker._last_fired) < 10
+    assert "checkout-service:http_error_rate" in worker._last_fired
