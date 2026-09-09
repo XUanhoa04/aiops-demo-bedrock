@@ -42,6 +42,7 @@ jobs:
           pip install -r aiops-services/incident-manager/requirements.txt
           pip install -r aiops-services/rca-engine/requirements.txt
           pip install -r aiops-services/remediation/requirements.txt
+          pip install -r aiops-services/feedback-collector/requirements.txt
           pip install pyyaml pytest
 
       - name: Validate docker-compose
@@ -59,6 +60,8 @@ jobs:
           pytest -q aiops-services/decision-engine/tests
           export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/engine-qa"
           pytest -q aiops-services/engine-qa/tests
+          export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/feedback-collector"
+          pytest -q aiops-services/feedback-collector/tests
           export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/incident-manager"
           pytest -q aiops-services/incident-manager/tests
           export PYTHONPATH="$ROOT/shared:$ROOT/aiops-services/rca-engine"

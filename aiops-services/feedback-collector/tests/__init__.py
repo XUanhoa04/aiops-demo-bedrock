@@ -1,0 +1,1 @@
+"""Feedback collector unit tests."""
