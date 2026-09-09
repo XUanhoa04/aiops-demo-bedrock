@@ -59,3 +59,9 @@ logs/
 *.mp4
 *.mkv
 recordings/
+
+# Evaluation scratch / local check outputs (preserve *_latest.json and .gitkeep)
+evaluation/results/*
+!evaluation/results/.gitkeep
+!evaluation/results/*_latest.json
+

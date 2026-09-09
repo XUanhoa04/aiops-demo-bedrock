@@ -27,11 +27,15 @@ def load_yaml_or_json(path: Path) -> dict[str, Any]:
 
 def load_scenario_file(path: Path) -> list[dict[str, Any]]:
     data = load_yaml_or_json(path)
-    scenarios = list(data.get("scenarios") or [])
-    for sc in scenarios:
+    raw_scenarios = list(data.get("scenarios") or [])
+    scenarios: list[dict[str, Any]] = []
+    for sc in raw_scenarios:
+        if not isinstance(sc, dict):
+            continue
         sc.setdefault("_source_file", str(path.name))
         # Default split for older scenarios without the field
         sc.setdefault("split", "core")
+        scenarios.append(sc)
     return scenarios
 
 
@@ -52,7 +56,7 @@ def load_scenarios(
         if not path.is_file():
             raise SystemExit(f"dataset not found: {path}")
         for sc in load_scenario_file(path):
-            sid = str(sc.get("scenario_id") or "")
+            sid = str(sc.get("scenario_id") or "").strip()
             if not sid or sid in seen:
                 continue
             seen.add(sid)
