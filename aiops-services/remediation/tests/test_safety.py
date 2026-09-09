@@ -104,7 +104,12 @@ class _RollbackHTTP:
             )
         if url.endswith("/health"):
             return _Response(503, {"status": "degraded"})
-        return _Response(200, {"error_rate": 0.01, "extra_latency_ms": 0})
+        if self.posts:
+            return _Response(200, dict(self.posts[-1]))
+        return _Response(
+            200,
+            {"error_rate": 0.01, "extra_latency_ms": 0, "fault_mode": "none"},
+        )
 
     def post(self, url, json):
         self.posts.append(dict(json))
@@ -202,6 +207,50 @@ def test_inventory_and_fraud_chaos_reset_routes_correctly():
         assert res_fraud.status == ActionStatus.EXECUTED
         assert any(settings.fraud_url in call for call in called_urls)
         assert not any(settings.checkout_url in call for call in called_urls)
+    finally:
+        settings.verify_after_execute = previous_verify
+        settings.simulate_only = previous_simulate
+        executor.close()
+
+
+def test_reset_chaos_clears_fault_mode():
+    executor = ActionExecutor()
+    executor._http.close()
+
+    posted_payloads: list[dict] = []
+
+    class _CaptureResetHTTP:
+        def __init__(self):
+            self.state = {"status": "ok", "error_rate": 0.5, "fault_mode": "stock_lock"}
+
+        def get(self, url):
+            return _Response(200, dict(self.state))
+
+        def post(self, url, json):
+            posted_payloads.append(dict(json))
+            self.state.update(json)
+            return _Response(200, dict(self.state))
+
+        def close(self):
+            pass
+
+    executor._http = _CaptureResetHTTP()
+    previous_verify = settings.verify_after_execute
+    previous_simulate = settings.simulate_only
+    settings.verify_after_execute = True
+    settings.simulate_only = False
+    try:
+        rec = ActionRecord(
+            incident_id="inc-fault-mode",
+            action_type=ActionType.RESET_ERROR_RATE.value,
+            target_service="inventory-service",
+            risk_level=RiskLevel.LOW,
+        )
+        res = executor.execute(rec, executed_by="operator")
+        assert res.status == ActionStatus.EXECUTED
+        assert posted_payloads
+        assert posted_payloads[0].get("fault_mode") == "none"
+        assert posted_payloads[0].get("error_rate") == 0.01
     finally:
         settings.verify_after_execute = previous_verify
         settings.simulate_only = previous_simulate

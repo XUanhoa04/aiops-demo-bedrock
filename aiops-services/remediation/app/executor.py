@@ -95,9 +95,9 @@ class ActionExecutor:
         atype = rec.action_type
         try:
             if atype == ActionType.RESET_ERROR_RATE.value:
-                return self._reset_chaos(rec, error_rate=0.01, extra_latency_ms=0)
+                return self._reset_chaos(rec, error_rate=0.01, extra_latency_ms=0, fault_mode="none")
             if atype == ActionType.RESET_LATENCY.value:
-                return self._reset_chaos(rec, extra_latency_ms=0)
+                return self._reset_chaos(rec, extra_latency_ms=0, fault_mode="none")
             if atype == ActionType.LOG_ONLY.value:
                 rec.command = f"# log-only: {rec.action_text}"
                 rec.status = ActionStatus.EXECUTED
@@ -129,6 +129,7 @@ class ActionExecutor:
         error_rate: Optional[float] = None,
         extra_latency_ms: Optional[float] = None,
         base_latency_ms: Optional[float] = None,
+        fault_mode: Optional[str] = None,
     ) -> ActionRecord:
         base = self.service_base_url(rec.target_service)
         payload: dict[str, Any] = {}
@@ -138,8 +139,10 @@ class ActionExecutor:
             payload["extra_latency_ms"] = extra_latency_ms
         if base_latency_ms is not None:
             payload["base_latency_ms"] = base_latency_ms
+        if fault_mode is not None:
+            payload["fault_mode"] = fault_mode
         if not payload:
-            payload = {"error_rate": 0.01, "extra_latency_ms": 0}
+            payload = {"error_rate": 0.01, "extra_latency_ms": 0, "fault_mode": "none"}
 
         previous: dict[str, Any] = {}
         try:
@@ -192,11 +195,13 @@ class ActionExecutor:
             health = self._http.get(f"{base}/health")
             state = self._http.get(f"{base}/chaos")
             actual = dict(state.json() or {}) if state.is_success else {}
-            mismatches = {
-                key: {"expected": value, "actual": actual.get(key)}
-                for key, value in expected.items()
-                if actual.get(key) != value
-            }
+            mismatches = {}
+            for key, value in expected.items():
+                actual_val = actual.get(key)
+                if key == "fault_mode" and actual_val is None and value == "none":
+                    actual_val = "none"
+                if actual_val != value:
+                    mismatches[key] = {"expected": value, "actual": actual_val}
             health_body = dict(health.json() or {}) if health.is_success else {}
             health_ok = health.is_success and health_body.get("status") == "ok"
             return {
