@@ -63,3 +63,28 @@ def test_patch_incident_sends_context_merge() -> None:
     finally:
         clients.close()
 
+
+def test_analyze_incident_direct_forwards_api_key_header() -> None:
+    clients = ServiceClients()
+    try:
+        with patch.object(clients._http, "post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"incident_id": "inc-789", "root_cause": "OOM"}
+            mock_post.return_value = mock_resp
+
+            prev_key = settings.remediation_api_key
+            settings.remediation_api_key = "test-secret-token-direct"
+            try:
+                res = clients.analyze_incident_direct("inc-789")
+                assert res is not None
+                assert res.get("root_cause") == "OOM"
+                mock_post.assert_called_once()
+                call_kwargs = mock_post.call_args.kwargs
+                assert call_kwargs.get("headers") == {"X-API-Key": "test-secret-token-direct"}
+            finally:
+                settings.remediation_api_key = prev_key
+    finally:
+        clients.close()
+
+

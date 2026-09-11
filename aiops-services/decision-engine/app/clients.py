@@ -19,7 +19,13 @@ logger = logging.getLogger(__name__)
 
 class ServiceClients:
     def __init__(self) -> None:
-        self._http = httpx.Client(timeout=httpx.Timeout(45.0, connect=3.0))
+        limits = httpx.Limits(
+            max_keepalive_connections=20, max_connections=50, keepalive_expiry=30.0
+        )
+        self._http = httpx.Client(
+            timeout=httpx.Timeout(45.0, connect=3.0),
+            limits=limits,
+        )
 
     def close(self) -> None:
         self._http.close()
@@ -100,7 +106,12 @@ class ServiceClients:
             f"?force={str(force).lower()}&persist={str(persist).lower()}"
         )
         try:
-            r = self._http.post(url)
+            headers = (
+                {"X-API-Key": settings.remediation_api_key}
+                if settings.remediation_api_key
+                else None
+            )
+            r = self._http.post(url, headers=headers)
             if r.status_code >= 400:
                 logger.error("analyze-incident HTTP %s: %s", r.status_code, r.text[:300])
                 return None
