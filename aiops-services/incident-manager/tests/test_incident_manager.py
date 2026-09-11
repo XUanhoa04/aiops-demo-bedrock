@@ -401,6 +401,57 @@ class TestAPIWithTestClient(unittest.TestCase):
             msg="UI should mention Incident Console/Manager",
         )
 
+    def test_observability_links_fallback_to_context_trace_id(self) -> None:
+        from aiops_shared.models import Incident
+
+        # Case 1: primary_trace_id at top level of context
+        inc1 = Incident(
+            title="Pre-RCA trace fallback test",
+            service_name="checkout-service",
+            context={"primary_trace_id": "trace-abc-123", "explanation": "high latency"},
+        )
+        self.main_mod.repo.insert(inc1)
+
+        res1 = self.client.get(f"/incidents/{inc1.id}/observability-links")
+        self.assertEqual(res1.status_code, 200)
+        body1 = res1.json()
+        self.assertEqual(body1["primary_trace_id"], "trace-abc-123")
+        self.assertIn("trace-abc-123", body1["primary_trace_url"])
+        self.assertEqual(body1["explanation"], "high latency")
+
+        # Case 2: traces array in context
+        inc2 = Incident(
+            title="Pre-RCA traces array test",
+            service_name="payment-service",
+            context={"traces": [{"trace_id": "trace-xyz-789"}]},
+        )
+        self.main_mod.repo.insert(inc2)
+
+        res2 = self.client.get(f"/incidents/{inc2.id}/observability-links")
+        self.assertEqual(res2.status_code, 200)
+        body2 = res2.json()
+        self.assertEqual(body2["primary_trace_id"], "trace-xyz-789")
+        self.assertIn("trace-xyz-789", body2["primary_trace_url"])
+
+    def test_observability_links_prefers_remediation_notes(self) -> None:
+        import json
+        from aiops_shared.models import Incident
+
+        inc = Incident(
+            title="Post-RCA preference test",
+            service_name="order-service",
+            context={"primary_trace_id": "context-trace"},
+            remediation_notes=json.dumps({"primary_trace_id": "rca-confirmed-trace"}),
+        )
+        self.main_mod.repo.insert(inc)
+
+        res = self.client.get(f"/incidents/{inc.id}/observability-links")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["primary_trace_id"], "rca-confirmed-trace")
+        self.assertIn("rca-confirmed-trace", body["primary_trace_url"])
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

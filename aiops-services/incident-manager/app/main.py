@@ -209,6 +209,18 @@ def incident_observability_links(incident_id: str) -> dict:
         except Exception:
             pass
 
+    # Fall back to incident context if primary_trace_id is not in remediation_notes
+    if not primary_trace_id and inc.context:
+        primary_trace_id = inc.context.get("primary_trace_id")
+        if not primary_trace_id:
+            traces = inc.context.get("traces")
+            if isinstance(traces, list) and traces:
+                first = traces[0]
+                if isinstance(first, dict):
+                    primary_trace_id = first.get("trace_id") or first.get("id")
+                elif isinstance(first, str):
+                    primary_trace_id = first
+
     links = build_observability_links(
         grafana_base=settings.grafana_public_url,
         service_name=inc.service_name,
