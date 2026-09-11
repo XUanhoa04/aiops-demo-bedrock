@@ -451,7 +451,37 @@ class TestAPIWithTestClient(unittest.TestCase):
         self.assertEqual(body["primary_trace_id"], "rca-confirmed-trace")
         self.assertIn("rca-confirmed-trace", body["primary_trace_url"])
 
+    def test_patch_incident_merges_context(self) -> None:
+        from aiops_shared.models import Incident
+
+        inc = Incident(
+            title="Context merge test",
+            service_name="checkout-service",
+            context={"primary_trace_id": "trace-initial", "anomaly_metric": "cpu"},
+        )
+        self.main_mod.repo.insert(inc)
+
+        patch_res = self.client.patch(
+            f"/incidents/{inc.id}",
+            json={
+                "status": "investigating",
+                "context": {
+                    "decision_action": "rca_suggest",
+                    "confidence_score": 0.88,
+                },
+            },
+        )
+        self.assertEqual(patch_res.status_code, 200)
+        data = patch_res.json()
+        self.assertEqual(data["status"], "investigating")
+        # Existing context preserved
+        self.assertEqual(data["context"]["primary_trace_id"], "trace-initial")
+        self.assertEqual(data["context"]["anomaly_metric"], "cpu")
+        # New context merged
+        self.assertEqual(data["context"]["decision_action"], "rca_suggest")
+        self.assertEqual(data["context"]["confidence_score"], 0.88)
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

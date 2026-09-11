@@ -296,6 +296,11 @@ class DecisionEngine:
             decision.incident_id,
             remediation_notes=notes,
             status="remediating",
+            context_merge={
+                "decision_action": decision.action.value,
+                "known_pattern_id": decision.known_pattern_id,
+                "confidence_score": decision.confidence_score,
+            },
         )
         decision.incident_patched = True
 
@@ -406,6 +411,11 @@ class DecisionEngine:
                 root_cause=result.get("root_cause"),
                 rca_confidence=decision.llm_confidence,
                 status="investigating",
+                context_merge={
+                    "decision_action": decision.action.value,
+                    "decision_band": decision.band.value,
+                    "confidence_score": decision.confidence_score,
+                },
             )
             decision.incident_patched = True
 
@@ -462,6 +472,10 @@ class DecisionEngine:
             remediation_notes=(
                 f"[decision-engine] ESCALATED: {decision.escalate_reason}"
             ),
+            context_merge={
+                "decision_action": decision.action.value,
+                "escalate_reason": decision.escalate_reason,
+            },
         )
         decision.incident_patched = ok
 

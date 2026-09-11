@@ -34,3 +34,32 @@ def test_propose_remediation_forwards_api_key_header() -> None:
                 settings.remediation_api_key = prev_key
     finally:
         clients.close()
+
+
+def test_patch_incident_sends_context_merge() -> None:
+    clients = ServiceClients()
+    try:
+        with patch.object(clients._http, "patch") as mock_patch:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"id": "inc-456"}
+            mock_patch.return_value = mock_resp
+
+            ok = clients.patch_incident(
+                incident_id="inc-456",
+                status="investigating",
+                context_merge={"decision_action": "rca_suggest", "confidence_score": 85.0},
+            )
+            assert ok is True
+            mock_patch.assert_called_once()
+            call_kwargs = mock_patch.call_args.kwargs
+            assert "json" in call_kwargs
+            payload = call_kwargs["json"]
+            assert payload["status"] == "investigating"
+            assert payload["context"] == {
+                "decision_action": "rca_suggest",
+                "confidence_score": 85.0,
+            }
+    finally:
+        clients.close()
+

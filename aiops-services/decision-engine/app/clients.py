@@ -203,8 +203,8 @@ class ServiceClients:
         context_merge: Optional[dict[str, Any]] = None,
     ) -> bool:
         """
-        PATCH incident. Incident Manager may not accept arbitrary context merge;
-        we put decision trail into description / remediation_notes as fallback.
+        PATCH incident. Enriches incident with status, notes, RCA, and context
+        metadata on Incident Manager.
         """
         url = f"{settings.incident_manager_url.rstrip('/')}/incidents/{incident_id}"
         body: dict[str, Any] = {}
@@ -223,6 +223,8 @@ class ServiceClients:
             body["rca_confidence"] = (
                 rca_confidence / 100.0 if rca_confidence > 1.0 else rca_confidence
             )
+        if context_merge is not None:
+            body["context"] = context_merge
         if not body:
             return False
         try:

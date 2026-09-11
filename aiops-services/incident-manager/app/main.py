@@ -99,6 +99,7 @@ class IncidentUpdate(BaseModel):
     remediation_notes: Optional[str] = None
     human_feedback: Optional[str] = None
     severity: Optional[AnomalySeverity] = None
+    context: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +332,12 @@ def update_incident(incident_id: str, body: IncidentUpdate) -> Incident:
         raise HTTPException(status_code=404, detail="incident not found")
     data = body.model_dump(exclude_unset=True)
     for key, value in data.items():
-        setattr(inc, key, value)
+        if key == "context" and isinstance(value, dict):
+            merged = dict(inc.context or {})
+            merged.update(value)
+            inc.context = merged
+        else:
+            setattr(inc, key, value)
     if body.status in (IncidentStatus.RESOLVED, IncidentStatus.CLOSED) and not inc.resolved_at:
         inc.resolved_at = utc_now()
     updated = repo.update(inc)
